@@ -64,28 +64,40 @@ public static class NightLight
 
     private static void Apply(int percent)
     {
-        ushort[] ramp = BuildRamp(percent);
-        bool applied = false;
+        bool any = false;
 
         foreach (string device in ActiveDisplays())
         {
             IntPtr hdc = CreateDC(null, device, null, IntPtr.Zero);
-            if (hdc != IntPtr.Zero)
-            {
-                if (SetDeviceGammaRamp(hdc, ramp)) applied = true;
-                DeleteDC(hdc);
-            }
+            if (hdc == IntPtr.Zero) continue;
+            if (ApplyRamp(hdc, percent)) any = true;
+            DeleteDC(hdc);
         }
 
-        if (!applied)
+        if (!any)
         {
             IntPtr dc = GetDC(IntPtr.Zero);
             if (dc != IntPtr.Zero)
             {
-                SetDeviceGammaRamp(dc, ramp);
+                ApplyRamp(dc, percent);
                 ReleaseDC(IntPtr.Zero, dc);
             }
         }
+    }
+
+    // Windows rejects gamma ramps it considers too extreme (very warm settings
+    // would otherwise do nothing). Try the requested warmth, then progressively
+    // milder versions until the OS accepts one — identity is always accepted.
+    private static bool ApplyRamp(IntPtr hdc, int percent)
+    {
+        for (double blend = 1.0; blend >= 0; blend -= 0.05)
+        {
+            if (SetDeviceGammaRamp(hdc, BuildRamp(percent, blend)))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static IEnumerable<string> ActiveDisplays()
@@ -101,7 +113,8 @@ public static class NightLight
         }
     }
 
-    private static ushort[] BuildRamp(int percent)
+    // blend 1.0 = full requested warmth, 0.0 = neutral (identity).
+    private static ushort[] BuildRamp(int percent, double blend)
     {
         percent = Math.Clamp(percent, 0, 100);
         int kelvin = NeutralKelvin - percent * (NeutralKelvin - WarmestKelvin) / 100;
@@ -109,7 +122,9 @@ public static class NightLight
         // Normalise against 6500K so 0% is a perfectly neutral (identity) ramp.
         var (nr, ng, nb) = KelvinToRgb(NeutralKelvin);
         var (r, g, b) = KelvinToRgb(kelvin);
-        double fr = r / nr, fg = g / ng, fb = b / nb;
+        double fr = 1 + (r / nr - 1) * blend;
+        double fg = 1 + (g / ng - 1) * blend;
+        double fb = 1 + (b / nb - 1) * blend;
 
         var ramp = new ushort[768];
         for (int i = 0; i < 256; i++)
