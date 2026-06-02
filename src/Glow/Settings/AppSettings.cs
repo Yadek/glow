@@ -10,15 +10,33 @@ public static class AppSettings
 
     public static bool AnimateTrayIcon
     {
-        get
-        {
-            using var key = Registry.CurrentUser.OpenSubKey(KeyPath);
-            return key?.GetValue("AnimateTrayIcon") is int v && v != 0;
-        }
-        set
-        {
-            using var key = Registry.CurrentUser.CreateSubKey(KeyPath);
-            key?.SetValue("AnimateTrayIcon", value ? 1 : 0, RegistryValueKind.DWord);
-        }
+        get => GetBool("AnimateTrayIcon");
+        set => SetInt("AnimateTrayIcon", value ? 1 : 0);
+    }
+
+    public static bool NightEnabled
+    {
+        get => GetBool("NightEnabled");
+        set => SetInt("NightEnabled", value ? 1 : 0);
+    }
+
+    public static int NightIntensity
+    {
+        get => GetInt("NightIntensity");
+        set => SetInt("NightIntensity", value);
+    }
+
+    private static bool GetBool(string name) => GetInt(name) != 0;
+
+    private static int GetInt(string name)
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(KeyPath);
+        return key?.GetValue(name) is int v ? v : 0;
+    }
+
+    private static void SetInt(string name, int value)
+    {
+        using var key = Registry.CurrentUser.CreateSubKey(KeyPath);
+        key?.SetValue(name, value, RegistryValueKind.DWord);
     }
 }

@@ -22,9 +22,7 @@ public sealed class BrightnessSlider : Control
         SetStyle(ControlStyles.AllPaintingInWmPaint
                | ControlStyles.OptimizedDoubleBuffer
                | ControlStyles.ResizeRedraw
-               | ControlStyles.UserPaint
-               | ControlStyles.SupportsTransparentBackColor, true);
-        BackColor = Color.Transparent;
+               | ControlStyles.UserPaint, true);
         TabStop = false;
     }
 
@@ -56,6 +54,7 @@ public sealed class BrightnessSlider : Control
     protected override void OnPaint(PaintEventArgs e)
     {
         var g = e.Graphics;
+        g.Clear(BackColor); // opaque background so AA edges blend with the card
         g.SmoothingMode = SmoothingMode.AntiAlias;
         g.PixelOffsetMode = PixelOffsetMode.Half;
 

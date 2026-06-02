@@ -1,5 +1,6 @@
 using Glow.Localization;
 using Glow.Monitors;
+using Glow.NightShift;
 using Glow.Settings;
 using Glow.Startup;
 using Glow.Update;
@@ -60,6 +61,7 @@ public sealed class TrayContext : ApplicationContext
             StartIconAnimation();
         }
 
+        NightLight.Initialize(); // re-apply saved night mode (gamma resets each session)
         ScheduleStartupUpdateCheck();
     }
 
@@ -175,6 +177,7 @@ public sealed class TrayContext : ApplicationContext
     private void OnExit(object? sender, EventArgs e)
     {
         _tray.Visible = false;
+        NightLight.RestoreNeutral(); // don't leave the screen tinted after we quit
         ExitThread();
     }
 

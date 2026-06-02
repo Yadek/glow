@@ -1,156 +1,156 @@
-using Microsoft.Win32;
+using System.Runtime.InteropServices;
+using Glow.Native;
+using Glow.Settings;
 
 namespace Glow.NightShift;
 
-// Controls the Windows "Night light" feature by editing its (undocumented)
-// CloudStore registry blobs, so toggling here flips the real Windows switch and
-// reading reflects changes made in Windows. Defensive: if a blob doesn't match
-// the known layout, the operation is skipped rather than risking corruption.
+// Night mode implemented with display gamma ramps (SetDeviceGammaRamp) — the same
+// proven approach f.lux/redshift use. Warms every attached monitor with a smooth
+// 0–100% intensity. Reliable across Windows 10/11 and applied instantly.
 public static class NightLight
 {
-    private const string StatePath =
-        @"Software\Microsoft\Windows\CurrentVersion\CloudStore\Store\DefaultAccount\Current\default$windows.data.bluelightreduction.bluelightreductionstate\windows.data.bluelightreduction.bluelightreductionstate";
-    private const string SettingsPath =
-        @"Software\Microsoft\Windows\CurrentVersion\CloudStore\Store\DefaultAccount\Current\default$windows.data.bluelightreduction.settings\windows.data.bluelightreduction.settings";
+    [DllImport("gdi32.dll")]
+    private static extern bool SetDeviceGammaRamp(IntPtr hdc, ushort[] ramp);
 
-    // Night light colour-temperature range (Kelvin). Lower = warmer.
-    private const int MinTemp = 1200; // 100% intensity
-    private const int MaxTemp = 6500; // 0% intensity (neutral)
+    [DllImport("gdi32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr CreateDC(string? driver, string device, string? port, IntPtr data);
 
-    // Available when the state blob exists and matches the known layout.
-    public static bool IsSupported
+    [DllImport("gdi32.dll")]
+    private static extern bool DeleteDC(IntPtr hdc);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetDC(IntPtr hwnd);
+
+    [DllImport("user32.dll")]
+    private static extern int ReleaseDC(IntPtr hwnd, IntPtr hdc);
+
+    private const int DISPLAY_DEVICE_ATTACHED_TO_DESKTOP = 0x00000001;
+
+    // 0% = neutral (6500K), 100% = warm.
+    private const int NeutralKelvin = 6500;
+    private const int WarmestKelvin = 2700;
+    private const int DefaultIntensity = 50;
+
+    private static bool _enabled;
+    private static int _intensity = DefaultIntensity;
+
+    public static bool IsEnabled() => _enabled;
+    public static int GetIntensity() => _intensity;
+
+    // Restore persisted state at startup and re-apply (gamma resets each session).
+    public static void Initialize()
     {
-        get
-        {
-            byte[]? d = ReadData(StatePath);
-            return d is not null && d.Length > 18 && d[0] == 0x43 && d[1] == 0x42
-                   && (d[18] == 0x13 || d[18] == 0x15);
-        }
-    }
-
-    public static bool IsEnabled()
-    {
-        byte[]? d = ReadData(StatePath);
-        return d is not null && d.Length > 18 && d[18] == 0x15;
+        _enabled = AppSettings.NightEnabled;
+        int saved = AppSettings.NightIntensity;
+        _intensity = saved > 0 ? Math.Clamp(saved, 0, 100) : DefaultIntensity;
+        if (_enabled) Apply(_intensity);
     }
 
     public static void SetEnabled(bool on)
     {
-        byte[]? data = ReadData(StatePath);
-        if (data is null || data.Length <= 24) return;
-
-        var b = new List<byte>(data);
-        StampTime(b);
-
-        if (on && b[18] == 0x13)
+        _enabled = on;
+        AppSettings.NightEnabled = on;
+        if (on)
         {
-            // mark enabled and insert the "10 00" run after the inner "CB" header
-            b[18] = 0x15;
-            b.InsertRange(23, new byte[] { 0x10, 0x00 });
+            if (_intensity <= 0)
+            {
+                _intensity = DefaultIntensity;
+                AppSettings.NightIntensity = _intensity;
+            }
+            Apply(_intensity);
         }
-        else if (!on && b[18] == 0x15 && b[23] == 0x10 && b[24] == 0x00)
+        else
         {
-            b[18] = 0x13;
-            b.RemoveRange(23, 2);
+            Apply(0); // back to neutral
         }
-
-        WriteData(StatePath, b.ToArray());
-    }
-
-    // 0..100, where 0 = neutral and 100 = warmest.
-    public static int GetIntensity()
-    {
-        byte[]? d = ReadData(SettingsPath);
-        if (d is null) return 0;
-        int i = FindTempIndex(d);
-        if (i < 0) return 0;
-        int temp = Math.Clamp(DecodeVarint2(d, i), MinTemp, MaxTemp);
-        return (int)Math.Round((MaxTemp - temp) * 100.0 / (MaxTemp - MinTemp));
     }
 
     public static void SetIntensity(int percent)
     {
-        byte[]? data = ReadData(SettingsPath);
-        if (data is null) return;
-        int i = FindTempIndex(data);
-        if (i < 0) return;
-
-        percent = Math.Clamp(percent, 0, 100);
-        int temp = (int)Math.Round(MaxTemp - percent / 100.0 * (MaxTemp - MinTemp));
-        byte[] v = EncodeVarint(temp); // 1200..6500 -> always 2 bytes
-        if (v.Length != 2) return;
-
-        var b = new List<byte>(data);
-        StampTime(b);
-        b[i] = v[0];
-        b[i + 1] = v[1];
-        WriteData(SettingsPath, b.ToArray());
+        _intensity = Math.Clamp(percent, 0, 100);
+        AppSettings.NightIntensity = _intensity;
+        if (_enabled) Apply(_intensity);
     }
 
-    // ----- blob helpers -----
+    // Reset displays to neutral without changing the saved state (used on exit).
+    public static void RestoreNeutral() => Apply(0);
 
-    // The night colour temperature is the 2-byte varint after the 0xCF 0x28 marker.
-    private static int FindTempIndex(byte[] d)
+    private static void Apply(int percent)
     {
-        for (int i = 0; i + 3 < d.Length; i++)
+        ushort[] ramp = BuildRamp(percent);
+        bool applied = false;
+
+        foreach (string device in ActiveDisplays())
         {
-            if (d[i] == 0xCF && d[i + 1] == 0x28 && (d[i + 2] & 0x80) != 0 && (d[i + 3] & 0x80) == 0)
+            IntPtr hdc = CreateDC(null, device, null, IntPtr.Zero);
+            if (hdc != IntPtr.Zero)
             {
-                return i + 2;
+                if (SetDeviceGammaRamp(hdc, ramp)) applied = true;
+                DeleteDC(hdc);
             }
         }
-        return -1;
-    }
 
-    // Rewrite the 5-byte "last changed" timestamp (after 0x2A 0x06) to now, so
-    // Windows accepts the change instead of treating it as stale.
-    private static void StampTime(List<byte> b)
-    {
-        if (b.Count < 15 || b[8] != 0x2A || b[9] != 0x06) return;
-        byte[] v = EncodeVarint(DateTimeOffset.UtcNow.ToUnixTimeSeconds());
-        if (v.Length != 5) return; // keep byte alignment (true for current era)
-        for (int k = 0; k < 5; k++) b[10 + k] = v[k];
-    }
-
-    private static int DecodeVarint2(byte[] d, int i) => (d[i] & 0x7F) | (d[i + 1] << 7);
-
-    private static byte[] EncodeVarint(long value)
-    {
-        var bytes = new List<byte>();
-        do
+        if (!applied)
         {
-            byte chunk = (byte)(value & 0x7F);
-            value >>= 7;
-            if (value != 0) chunk |= 0x80;
-            bytes.Add(chunk);
-        } while (value != 0);
-        return bytes.ToArray();
-    }
-
-    private static byte[]? ReadData(string path)
-    {
-        try
-        {
-            using var key = Registry.CurrentUser.OpenSubKey(path);
-            return key?.GetValue("Data") as byte[];
-        }
-        catch
-        {
-            return null;
+            IntPtr dc = GetDC(IntPtr.Zero);
+            if (dc != IntPtr.Zero)
+            {
+                SetDeviceGammaRamp(dc, ramp);
+                ReleaseDC(IntPtr.Zero, dc);
+            }
         }
     }
 
-    private static void WriteData(string path, byte[] data)
+    private static IEnumerable<string> ActiveDisplays()
     {
-        try
+        for (uint i = 0; ; i++)
         {
-            using var key = Registry.CurrentUser.OpenSubKey(path, writable: true)
-                            ?? Registry.CurrentUser.CreateSubKey(path);
-            key?.SetValue("Data", data, RegistryValueKind.Binary);
+            var dd = new NativeMethods.DISPLAY_DEVICE { cb = Marshal.SizeOf<NativeMethods.DISPLAY_DEVICE>() };
+            if (!NativeMethods.EnumDisplayDevices(null, i, ref dd, 0)) break;
+            if ((dd.StateFlags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP) != 0)
+            {
+                yield return dd.DeviceName;
+            }
         }
-        catch
+    }
+
+    private static ushort[] BuildRamp(int percent)
+    {
+        percent = Math.Clamp(percent, 0, 100);
+        int kelvin = NeutralKelvin - percent * (NeutralKelvin - WarmestKelvin) / 100;
+
+        // Normalise against 6500K so 0% is a perfectly neutral (identity) ramp.
+        var (nr, ng, nb) = KelvinToRgb(NeutralKelvin);
+        var (r, g, b) = KelvinToRgb(kelvin);
+        double fr = r / nr, fg = g / ng, fb = b / nb;
+
+        var ramp = new ushort[768];
+        for (int i = 0; i < 256; i++)
         {
-            // ignore — night light just won't change
+            int baseVal = i * 257; // 0..65535
+            ramp[i] = Clamp(baseVal * fr);
+            ramp[256 + i] = Clamp(baseVal * fg);
+            ramp[512 + i] = Clamp(baseVal * fb);
         }
+        return ramp;
+    }
+
+    private static ushort Clamp(double v) => (ushort)Math.Clamp(v, 0, 65535);
+
+    // Tanner Helland's blackbody approximation (returns 0..255 per channel).
+    private static (double r, double g, double b) KelvinToRgb(int kelvin)
+    {
+        double t = kelvin / 100.0;
+        double r, g, b;
+
+        r = t <= 66 ? 255 : 329.698727446 * Math.Pow(t - 60, -0.1332047592);
+        g = t <= 66
+            ? 99.4708025861 * Math.Log(t) - 161.1195681661
+            : 288.1221695283 * Math.Pow(t - 60, -0.0755148492);
+        if (t >= 66) b = 255;
+        else if (t <= 19) b = 0;
+        else b = 138.5177312231 * Math.Log(t - 10) - 305.0447927307;
+
+        return (Math.Clamp(r, 1, 255), Math.Clamp(g, 1, 255), Math.Clamp(b, 1, 255));
     }
 }

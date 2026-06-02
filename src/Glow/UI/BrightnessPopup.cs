@@ -41,10 +41,6 @@ public sealed class BrightnessPopup : Form
     private int _finalTop;
     private DateTime _lastHide = DateTime.MinValue;
 
-    // Debounce night-light intensity writes while dragging the slider.
-    private readonly System.Windows.Forms.Timer _nlApply = new() { Interval = 120 };
-    private int _nlPending = -1;
-
     public BrightnessPopup(MonitorManager monitors)
     {
         _monitors = monitors;
@@ -59,11 +55,6 @@ public sealed class BrightnessPopup : Form
         Font = new Font("Segoe UI", 9f);
 
         _anim.Tick += OnAnimTick;
-        _nlApply.Tick += (_, _) =>
-        {
-            _nlApply.Stop();
-            if (_nlPending >= 0) NightLight.SetIntensity(_nlPending);
-        };
     }
 
     // Toggle from a tray click: open if closed, close if open. The short guard
@@ -97,7 +88,6 @@ public sealed class BrightnessPopup : Form
 
         Width = S(LWidth);
         Height = height;
-        ApplyRoundedRegion();
 
         var area = Screen.PrimaryScreen?.WorkingArea ?? Screen.GetWorkingArea(this);
         Left = area.Right - Width - S(12);
@@ -164,7 +154,7 @@ public sealed class BrightnessPopup : Form
         {
             Text = Strings.Title,
             ForeColor = TextColor,
-            BackColor = Color.Transparent,
+            BackColor = FormBg,
             Font = MakeFont(14f, FontStyle.Bold),
             AutoSize = false,
             TextAlign = ContentAlignment.MiddleLeft,
@@ -179,7 +169,7 @@ public sealed class BrightnessPopup : Form
             {
                 Text = Strings.NoMonitors,
                 ForeColor = SubtleColor,
-                BackColor = Color.Transparent,
+                BackColor = FormBg,
                 Font = MakeFont(11.5f),
                 AutoSize = false,
                 TextAlign = ContentAlignment.MiddleLeft,
@@ -198,66 +188,62 @@ public sealed class BrightnessPopup : Form
             y -= S(LCardGap); // no gap after the last card
         }
 
-        if (NightLight.IsSupported)
-        {
-            y += S(LCardGap);
-            Controls.Add(BuildNightLightCard(new Rectangle(S(LPadX), y, contentWidth, S(LCardH))));
-            y += S(LCardH);
-        }
+        y += S(LCardGap);
+        Controls.Add(BuildNightLightCard(new Rectangle(S(LPadX), y, contentWidth, S(LCardH))));
+        y += S(LCardH);
 
         y += S(LPadBottom);
         ResumeLayout();
         return y;
     }
 
-    private Panel BuildNightLightCard(Rectangle bounds)
+    private RoundedPanel BuildNightLightCard(Rectangle bounds)
     {
-        var card = new Panel { Bounds = bounds, BackColor = CardColor };
-        card.Paint += (_, e) =>
+        var card = new RoundedPanel
         {
-            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-            using var brush = new SolidBrush(CardColor);
-            using var path = RoundedPath(new Rectangle(0, 0, card.Width, card.Height), S(LCardRadius));
-            e.Graphics.FillPath(brush, path);
+            Bounds = bounds,
+            BackColor = FormBg,
+            FillColor = CardColor,
+            CornerRadius = S(LCardRadius),
         };
-        card.Region = new Region(RoundedPath(new Rectangle(0, 0, card.Width, card.Height), S(LCardRadius)));
 
         int innerX = S(LCardInsetX);
         int innerW = card.Width - innerX * 2;
-        int pillW = S(52), pillH = S(20);
+        int pillW = S(52), pillH = S(22);
 
         var title = new Label
         {
             Text = Strings.NightLight,
             ForeColor = TextColor,
-            BackColor = Color.Transparent,
+            BackColor = CardColor,
             Font = MakeFont(12f),
             AutoSize = false,
             TextAlign = ContentAlignment.MiddleLeft,
-            Bounds = new Rectangle(innerX, S(10), innerW - pillW - S(6), S(18)),
+            Bounds = new Rectangle(innerX, S(9), innerW - pillW - S(6), S(20)),
         };
 
-        var pill = new Label
+        var pill = new RoundedPanel
         {
-            AutoSize = false,
-            TextAlign = ContentAlignment.MiddleCenter,
+            BackColor = CardColor,
+            CornerRadius = pillH / 2,
             Font = MakeFont(10.5f, FontStyle.Bold),
             Cursor = Cursors.Hand,
-            Bounds = new Rectangle(innerX + innerW - pillW, S(9), pillW, pillH),
+            Bounds = new Rectangle(innerX + innerW - pillW, S(8), pillW, pillH),
         };
-        pill.Region = new Region(RoundedPath(new Rectangle(0, 0, pillW, pillH), pillH / 2));
 
         var slider = new BrightnessSlider
         {
             Value = Math.Clamp(NightLight.GetIntensity(), 0, 100),
+            BackColor = CardColor,
             Bounds = new Rectangle(innerX, S(38), innerW, S(LSliderH)),
         };
 
         void RefreshPill(bool on)
         {
             pill.Text = on ? Strings.On : Strings.Off;
-            pill.BackColor = on ? Theme.AccentColor() : Color.FromArgb(70, 70, 78);
+            pill.FillColor = on ? Theme.AccentColor() : Color.FromArgb(72, 72, 80);
             pill.ForeColor = on ? Color.White : SubtleColor;
+            pill.Invalidate();
         }
         RefreshPill(NightLight.IsEnabled());
 
@@ -267,12 +253,7 @@ public sealed class BrightnessPopup : Form
             RefreshPill(NightLight.IsEnabled());
         };
 
-        slider.ValueChanged += (_, _) =>
-        {
-            _nlPending = slider.Value;
-            _nlApply.Stop();
-            _nlApply.Start(); // apply shortly after the user stops dragging
-        };
+        slider.ValueChanged += (_, _) => NightLight.SetIntensity(slider.Value); // live
 
         card.Controls.Add(title);
         card.Controls.Add(pill);
@@ -280,21 +261,15 @@ public sealed class BrightnessPopup : Form
         return card;
     }
 
-    private Panel BuildMonitorCard(BrightnessMonitor monitor, int index, Rectangle bounds)
+    private RoundedPanel BuildMonitorCard(BrightnessMonitor monitor, int index, Rectangle bounds)
     {
-        var card = new Panel
+        var card = new RoundedPanel
         {
             Bounds = bounds,
-            BackColor = CardColor,
+            BackColor = FormBg,     // corners blend into the form
+            FillColor = CardColor,
+            CornerRadius = S(LCardRadius),
         };
-        card.Paint += (_, e) =>
-        {
-            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-            using var brush = new SolidBrush(CardColor);
-            using var path = RoundedPath(new Rectangle(0, 0, card.Width, card.Height), S(LCardRadius));
-            e.Graphics.FillPath(brush, path);
-        };
-        card.Region = new Region(RoundedPath(new Rectangle(0, 0, card.Width, card.Height), S(LCardRadius)));
 
         int innerX = S(LCardInsetX);
         int innerW = card.Width - innerX * 2;
@@ -303,7 +278,7 @@ public sealed class BrightnessPopup : Form
         {
             Text = string.IsNullOrWhiteSpace(monitor.Name) ? Strings.Display(index) : monitor.Name,
             ForeColor = TextColor,
-            BackColor = Color.Transparent,
+            BackColor = CardColor,
             Font = MakeFont(12f),
             AutoSize = false,
             AutoEllipsis = true,
@@ -315,7 +290,7 @@ public sealed class BrightnessPopup : Form
         {
             Text = monitor.Percent + "%",
             ForeColor = SubtleColor,
-            BackColor = Color.Transparent,
+            BackColor = CardColor,
             Font = MakeFont(12f),
             AutoSize = false,
             TextAlign = ContentAlignment.MiddleRight,
@@ -325,6 +300,7 @@ public sealed class BrightnessPopup : Form
         var slider = new BrightnessSlider
         {
             Value = Math.Clamp(monitor.Percent, 0, 100),
+            BackColor = CardColor,
             Bounds = new Rectangle(innerX, S(38), innerW, S(LSliderH)),
         };
         slider.ValueChanged += (_, _) =>
@@ -337,24 +313,6 @@ public sealed class BrightnessPopup : Form
         card.Controls.Add(percent);
         card.Controls.Add(slider);
         return card;
-    }
-
-    private void ApplyRoundedRegion()
-    {
-        using var path = RoundedPath(new Rectangle(0, 0, Width, Height), S(14));
-        Region = new Region(path);
-    }
-
-    private static GraphicsPath RoundedPath(Rectangle rect, int radius)
-    {
-        int d = Math.Max(1, radius * 2);
-        var path = new GraphicsPath();
-        path.AddArc(rect.X, rect.Y, d, d, 180, 90);
-        path.AddArc(rect.Right - d, rect.Y, d, d, 270, 90);
-        path.AddArc(rect.Right - d, rect.Bottom - d, d, d, 0, 90);
-        path.AddArc(rect.X, rect.Bottom - d, d, d, 90, 90);
-        path.CloseFigure();
-        return path;
     }
 
     private void DisposeChildren()
@@ -383,12 +341,25 @@ public sealed class BrightnessPopup : Form
         }
     }
 
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        // Smooth, OS-native rounded corners on Windows 11 (ignored on Windows 10).
+        const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
+        const int DWMWCP_ROUND = 2;
+        int pref = DWMWCP_ROUND;
+        try { DwmSetWindowAttribute(Handle, DWMWA_WINDOW_CORNER_PREFERENCE, ref pref, sizeof(int)); }
+        catch { /* dwmapi unavailable */ }
+    }
+
+    [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
+
     protected override void Dispose(bool disposing)
     {
         if (disposing)
         {
             _anim.Dispose();
-            _nlApply.Dispose();
         }
         base.Dispose(disposing);
     }
