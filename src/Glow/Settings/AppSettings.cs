@@ -22,16 +22,16 @@ public static class AppSettings
 
     public static int NightIntensity
     {
-        get => GetInt("NightIntensity");
+        get => GetInt("NightIntensity", defaultValue: 50); // 50% on a fresh install
         set => SetInt("NightIntensity", value);
     }
 
     private static bool GetBool(string name) => GetInt(name) != 0;
 
-    private static int GetInt(string name)
+    private static int GetInt(string name, int defaultValue = 0)
     {
         using var key = Registry.CurrentUser.OpenSubKey(KeyPath);
-        return key?.GetValue(name) is int v ? v : 0;
+        return key?.GetValue(name) is int v ? v : defaultValue;
     }
 
     private static void SetInt(string name, int value)

@@ -41,8 +41,7 @@ public static class NightLight
     public static void Initialize()
     {
         _enabled = AppSettings.NightEnabled;
-        int saved = AppSettings.NightIntensity;
-        _intensity = saved > 0 ? Math.Clamp(saved, 0, 100) : DefaultIntensity;
+        _intensity = Math.Clamp(AppSettings.NightIntensity, 0, 100);
         if (_enabled) Apply(_intensity);
     }
 
@@ -50,19 +49,7 @@ public static class NightLight
     {
         _enabled = on;
         AppSettings.NightEnabled = on;
-        if (on)
-        {
-            if (_intensity <= 0)
-            {
-                _intensity = DefaultIntensity;
-                AppSettings.NightIntensity = _intensity;
-            }
-            Apply(_intensity);
-        }
-        else
-        {
-            Apply(0); // back to neutral
-        }
+        Apply(on ? _intensity : 0); // enabling applies exactly the current level
     }
 
     public static void SetIntensity(int percent)
