@@ -95,12 +95,14 @@ begin
   Result := '';
 end;
 
-// Also remove the autostart value on uninstall in case it was enabled from the app menu.
+// On uninstall, remove the autostart value and the app's settings key so nothing
+// is left in the registry.
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usUninstall then
   begin
     RegDeleteValue(HKEY_CURRENT_USER,
       'Software\Microsoft\Windows\CurrentVersion\Run', 'Glow');
+    RegDeleteKeyIncludingSubkeys(HKEY_CURRENT_USER, 'Software\Glow');
   end;
 end;

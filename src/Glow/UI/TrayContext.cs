@@ -1,23 +1,31 @@
 using Glow.Localization;
 using Glow.Monitors;
+using Glow.Settings;
 using Glow.Startup;
 using Glow.Update;
 
 namespace Glow.UI;
 
-// Owns the tray icon, its menu and the popup. No main window, no timers:
-// it only does work when clicked, so idle CPU is essentially zero.
+// Owns the tray icon, its menu and the popup. No main window, no timers while idle:
+// it only does work when clicked, so idle CPU is essentially zero. (The optional
+// tray-icon animation adds a light timer, but only while the user enables it.)
 public sealed class TrayContext : ApplicationContext
 {
     private readonly NotifyIcon _tray;
     private readonly MonitorManager _monitors = new();
     private readonly BrightnessPopup _popup;
     private readonly ToolStripMenuItem _startupItem;
+    private readonly ToolStripMenuItem _animateItem;
+    private readonly int _iconSize;
+
+    private System.Windows.Forms.Timer? _iconAnim;
+    private double _iconPhase;
     private bool _updateChecking;
 
     public TrayContext()
     {
         _popup = new BrightnessPopup(_monitors);
+        _iconSize = SystemInformation.SmallIconSize.Width <= 16 ? 16 : 32;
 
         var menu = new ContextMenuStrip();
 
@@ -26,34 +34,40 @@ public sealed class TrayContext : ApplicationContext
             Checked = StartupManager.IsEnabled(),
             CheckOnClick = true,
         };
+        _animateItem = new ToolStripMenuItem(Strings.AnimateIcon, null, OnToggleAnimation)
+        {
+            Checked = AppSettings.AnimateTrayIcon,
+            CheckOnClick = true,
+        };
+
         menu.Items.Add(_startupItem);
+        menu.Items.Add(_animateItem);
         menu.Items.Add(new ToolStripMenuItem(Strings.CheckUpdates, null, async (_, _) => await CheckForUpdatesAsync(manual: true)));
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(new ToolStripMenuItem(Strings.Exit, null, OnExit));
 
         _tray = new NotifyIcon
         {
-            Icon = GlowIcon.Create(SystemInformation.SmallIconSize.Width <= 16 ? 16 : 32),
+            Icon = GlowIcon.Create(_iconSize),
             Text = Strings.TrayTooltip,
             Visible = true,
             ContextMenuStrip = menu,
         };
         _tray.MouseClick += OnTrayClick;
 
+        if (AppSettings.AnimateTrayIcon)
+        {
+            StartIconAnimation();
+        }
+
         ScheduleStartupUpdateCheck();
     }
 
     private void OnTrayClick(object? sender, MouseEventArgs e)
     {
-        if (e.Button != MouseButtons.Left) return;
-
-        if (_popup.Visible)
+        if (e.Button == MouseButtons.Left)
         {
-            _popup.Hide();
-        }
-        else
-        {
-            _popup.ShowNearTray();
+            _popup.ToggleFromTray();
         }
     }
 
@@ -63,7 +77,51 @@ public sealed class TrayContext : ApplicationContext
         _startupItem.Checked = StartupManager.IsEnabled();
     }
 
-    // Check once a few seconds after launch, on the UI thread (message pump running).
+    // ----- animated tray icon -----
+
+    private void OnToggleAnimation(object? sender, EventArgs e)
+    {
+        AppSettings.AnimateTrayIcon = _animateItem.Checked;
+        if (_animateItem.Checked)
+        {
+            StartIconAnimation();
+        }
+        else
+        {
+            StopIconAnimation();
+        }
+    }
+
+    private void StartIconAnimation()
+    {
+        _iconAnim ??= new System.Windows.Forms.Timer { Interval = 70 };
+        _iconAnim.Tick -= OnIconAnimTick;
+        _iconAnim.Tick += OnIconAnimTick;
+        _iconAnim.Start();
+    }
+
+    private void StopIconAnimation()
+    {
+        _iconAnim?.Stop();
+        SetTrayIcon(GlowIcon.Create(_iconSize));
+    }
+
+    private void OnIconAnimTick(object? sender, EventArgs e)
+    {
+        _iconPhase += 0.08;
+        SetTrayIcon(GlowIcon.CreateGradient(_iconSize, _iconPhase));
+    }
+
+    // Swap the icon and dispose the previous one to free its GDI handle.
+    private void SetTrayIcon(Icon icon)
+    {
+        var old = _tray.Icon;
+        _tray.Icon = icon;
+        old?.Dispose();
+    }
+
+    // ----- updates -----
+
     private void ScheduleStartupUpdateCheck()
     {
         var timer = new System.Windows.Forms.Timer { Interval = 4000 };
@@ -124,6 +182,8 @@ public sealed class TrayContext : ApplicationContext
     {
         if (disposing)
         {
+            _iconAnim?.Dispose();
+            _tray.Icon?.Dispose();
             _tray.Dispose();
             _popup.Dispose();
             _monitors.Dispose();

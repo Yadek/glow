@@ -31,6 +31,15 @@ public sealed class BrightnessPopup : Form
 
     private float _scale = 1f;
 
+    // Fade + slide animation state.
+    private const int SlideOffset = 14;       // logical px the popup rises while fading in
+    private const double AnimDurationMs = 140;
+    private readonly System.Windows.Forms.Timer _anim = new() { Interval = 10 };
+    private double _animProgress;             // 0 (hidden) .. 1 (shown)
+    private int _animDir;                     // +1 fading in, -1 fading out
+    private int _finalTop;
+    private DateTime _lastHide = DateTime.MinValue;
+
     public BrightnessPopup(MonitorManager monitors)
     {
         _monitors = monitors;
@@ -43,6 +52,22 @@ public sealed class BrightnessPopup : Form
         TopMost = true;
         DoubleBuffered = true;
         Font = new Font("Segoe UI", 9f);
+
+        _anim.Tick += OnAnimTick;
+    }
+
+    // Toggle from a tray click: open if closed, close if open. The short guard
+    // swallows the click that arrives right after the popup auto-hid on focus
+    // loss, so clicking the icon while it's open closes it (and keeps it closed).
+    public void ToggleFromTray()
+    {
+        if (Visible)
+        {
+            HideAnimated();
+            return;
+        }
+        if ((DateTime.UtcNow - _lastHide).TotalMilliseconds < 300) return;
+        ShowNearTray();
     }
 
     private int S(int logical) => (int)Math.Round(logical * _scale);
@@ -66,11 +91,54 @@ public sealed class BrightnessPopup : Form
 
         var area = Screen.PrimaryScreen?.WorkingArea ?? Screen.GetWorkingArea(this);
         Left = area.Right - Width - S(12);
-        Top = area.Bottom - Height - S(12);
+        _finalTop = area.Bottom - Height - S(12);
+
+        // Start transparent and slightly lower, then fade + slide up.
+        Opacity = 0;
+        Top = _finalTop + S(SlideOffset);
+        _animProgress = 0;
+        _animDir = 1;
 
         Show();
         Activate();
+        _anim.Start();
     }
+
+    // Fade out, then actually hide once fully transparent.
+    public void HideAnimated()
+    {
+        if (!Visible) return;
+        if (_animDir < 0 && _anim.Enabled) return; // already fading out
+        if (_animProgress <= 0) _animProgress = 1;  // shown instantly -> start from full
+        _animDir = -1;
+        _anim.Start();
+    }
+
+    private void OnAnimTick(object? sender, EventArgs e)
+    {
+        _animProgress += _animDir * (_anim.Interval / AnimDurationMs);
+
+        if (_animDir < 0 && _animProgress <= 0)
+        {
+            _animProgress = 0;
+            _anim.Stop();
+            Opacity = 0;
+            _lastHide = DateTime.UtcNow;
+            base.Hide();
+            return;
+        }
+        if (_animDir > 0 && _animProgress >= 1)
+        {
+            _animProgress = 1;
+            _anim.Stop();
+        }
+
+        double eased = EaseOutCubic(Math.Clamp(_animProgress, 0, 1));
+        Opacity = eased;
+        Top = _finalTop + (int)Math.Round((1 - eased) * S(SlideOffset));
+    }
+
+    private static double EaseOutCubic(double t) => 1 - Math.Pow(1 - t, 3);
 
     // Builds the controls and returns the total form height in device px.
     private int BuildContent()
@@ -213,7 +281,8 @@ public sealed class BrightnessPopup : Form
     protected override void OnDeactivate(EventArgs e)
     {
         base.OnDeactivate(e);
-        Hide(); // dismiss when the user clicks elsewhere
+        _lastHide = DateTime.UtcNow; // mark now so a tray click doesn't reopen
+        HideAnimated();              // fade out when the user clicks elsewhere
     }
 
     protected override CreateParams CreateParams
@@ -225,5 +294,14 @@ public sealed class BrightnessPopup : Form
             cp.ClassStyle |= CS_DROPSHADOW;
             return cp;
         }
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _anim.Dispose();
+        }
+        base.Dispose(disposing);
     }
 }

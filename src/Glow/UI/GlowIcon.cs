@@ -1,13 +1,34 @@
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Text;
+using System.Runtime.InteropServices;
 
 namespace Glow.UI;
 
-// Draws the tray icon at runtime: white "glow" on a black rounded square.
+// Draws the tray icon: white "glow" on a rounded square. The background is either
+// solid black (Create) or a slowly shifting gradient (CreateGradient) for the
+// optional animated icon.
 public static class GlowIcon
 {
+    private static readonly Color StaticBg = Color.FromArgb(18, 18, 20);
+
     public static Icon Create(int size = 32)
+        => Build(size, rect => new SolidBrush(StaticBg));
+
+    // phase advances over time (radians-ish); hues rotate to create a smooth shimmer.
+    public static Icon CreateGradient(int size, double phase)
+    {
+        return Build(size, rect =>
+        {
+            double hue = (phase * 40.0) % 360.0;
+            Color c1 = FromHsl(hue, 0.65, 0.50);
+            Color c2 = FromHsl((hue + 60.0) % 360.0, 0.65, 0.58);
+            float angle = (float)((phase * 30.0) % 360.0);
+            return new LinearGradientBrush(rect, c1, c2, angle);
+        });
+    }
+
+    private static Icon Build(int size, Func<RectangleF, Brush> backgroundBrush)
     {
         using var bmp = new Bitmap(size, size);
         using (var g = Graphics.FromImage(bmp))
@@ -16,49 +37,42 @@ public static class GlowIcon
             g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
             g.Clear(Color.Transparent);
 
-            float radius = size * 0.22f;
-            using (var path = RoundedRect(new RectangleF(0, 0, size - 1, size - 1), radius))
-            using (var bg = new SolidBrush(Color.FromArgb(18, 18, 20)))
+            var rect = new RectangleF(0, 0, size - 1, size - 1);
+            using (var path = RoundedRect(rect, size * 0.22f))
+            using (var brush = backgroundBrush(rect))
             {
-                g.FillPath(bg, path);
+                g.FillPath(brush, path);
             }
 
-            // "glow" scaled to fit; for tiny tray sizes a single "g" reads better.
-            string text = size >= 24 ? "glow" : "g";
-            using var fg = new SolidBrush(Color.White);
-            using var fmt = new StringFormat(StringFormat.GenericTypographic)
-            {
-                Alignment = StringAlignment.Center,
-                LineAlignment = StringAlignment.Center,
-                FormatFlags = StringFormatFlags.NoWrap,
-            };
+            DrawGlowText(g, size);
+        }
 
-            // Shrink the font until "glow" fits on one line in the square.
-            float target = size * 0.82f;
-            float fontSize = size * (size >= 24 ? 0.42f : 0.6f);
-            var font = new Font("Segoe UI", fontSize, FontStyle.Bold, GraphicsUnit.Pixel);
-            float measured = g.MeasureString(text, font, PointF.Empty, fmt).Width;
-            if (measured > target)
-            {
-                fontSize *= target / measured;
-                font.Dispose();
-                font = new Font("Segoe UI", fontSize, FontStyle.Bold, GraphicsUnit.Pixel);
-            }
-            g.DrawString(text, font, fg, new RectangleF(0, 0, size, size), fmt);
+        return ToIcon(bmp);
+    }
+
+    private static void DrawGlowText(Graphics g, int size)
+    {
+        string text = size >= 24 ? "glow" : "g";
+        using var fg = new SolidBrush(Color.White);
+        using var fmt = new StringFormat(StringFormat.GenericTypographic)
+        {
+            Alignment = StringAlignment.Center,
+            LineAlignment = StringAlignment.Center,
+            FormatFlags = StringFormatFlags.NoWrap,
+        };
+
+        float target = size * 0.82f;
+        float fontSize = size * (size >= 24 ? 0.42f : 0.6f);
+        var font = new Font("Segoe UI", fontSize, FontStyle.Bold, GraphicsUnit.Pixel);
+        float measured = g.MeasureString(text, font, PointF.Empty, fmt).Width;
+        if (measured > target)
+        {
+            fontSize *= target / measured;
             font.Dispose();
+            font = new Font("Segoe UI", fontSize, FontStyle.Bold, GraphicsUnit.Pixel);
         }
-
-        IntPtr hIcon = bmp.GetHicon();
-        try
-        {
-            // Clone so the Icon owns managed memory and the GDI handle can be freed.
-            using var temp = Icon.FromHandle(hIcon);
-            return (Icon)temp.Clone();
-        }
-        finally
-        {
-            NativeDestroyIcon(hIcon);
-        }
+        g.DrawString(text, font, fg, new RectangleF(0, 0, size, size), fmt);
+        font.Dispose();
     }
 
     private static GraphicsPath RoundedRect(RectangleF r, float radius)
@@ -73,6 +87,53 @@ public static class GlowIcon
         return path;
     }
 
-    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "DestroyIcon")]
-    private static extern bool NativeDestroyIcon(IntPtr handle);
+    private static Icon ToIcon(Bitmap bmp)
+    {
+        IntPtr hIcon = bmp.GetHicon();
+        try
+        {
+            using var temp = Icon.FromHandle(hIcon);
+            return (Icon)temp.Clone();
+        }
+        finally
+        {
+            DestroyIcon(hIcon);
+        }
+    }
+
+    // HSL (h in degrees, s/l in 0..1) to RGB.
+    private static Color FromHsl(double h, double s, double l)
+    {
+        h = (h % 360.0) / 360.0;
+        double r, g, b;
+        if (s == 0)
+        {
+            r = g = b = l;
+        }
+        else
+        {
+            double q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+            double p = 2 * l - q;
+            r = HueToRgb(p, q, h + 1.0 / 3.0);
+            g = HueToRgb(p, q, h);
+            b = HueToRgb(p, q, h - 1.0 / 3.0);
+        }
+        return Color.FromArgb(
+            (int)Math.Round(r * 255),
+            (int)Math.Round(g * 255),
+            (int)Math.Round(b * 255));
+    }
+
+    private static double HueToRgb(double p, double q, double t)
+    {
+        if (t < 0) t += 1;
+        if (t > 1) t -= 1;
+        if (t < 1.0 / 6.0) return p + (q - p) * 6 * t;
+        if (t < 1.0 / 2.0) return q;
+        if (t < 2.0 / 3.0) return p + (q - p) * (2.0 / 3.0 - t) * 6;
+        return p;
+    }
+
+    [DllImport("user32.dll", EntryPoint = "DestroyIcon")]
+    private static extern bool DestroyIcon(IntPtr handle);
 }

@@ -30,6 +30,8 @@ public static class Strings
 
     public static string CheckUpdates => Pick("Check for updates", "Проверить обновления");
 
+    public static string AnimateIcon => Pick("Animate tray icon", "Анимировать иконку в трее");
+
     public static string UpdateAvailable(string version) => Pick(
         $"Glow {version} is available. Update now?",
         $"Доступна новая версия Glow {version}. Обновить сейчас?");
