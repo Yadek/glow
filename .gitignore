@@ -1,0 +1,19 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+publish/
+installer/Output/
+
+# .NET / Rider / VS
+.vs/
+*.user
+*.suo
+*.userprefs
+artifacts/
+
+# Logs
+*.log
+
+# OS
+Thumbs.db
+desktop.ini

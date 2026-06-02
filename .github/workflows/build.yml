@@ -1,0 +1,75 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - "v*"            # e.g. v1.0.0
+  workflow_dispatch:    # allow manual runs for testing
+
+permissions:
+  contents: write       # required to create a GitHub Release
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Derive version from tag
+        id: ver
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          if ($tag -match '^v(.+)$') { $v = $Matches[1] } else { $v = "1.0.0" }
+          "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Building version $v"
+
+      - name: Restore
+        run: dotnet restore src/Glow/Glow.csproj
+
+      - name: Publish (self-contained, single-file, trimmed)
+        run: >
+          dotnet publish src/Glow/Glow.csproj
+          -c Release
+          -r win-x64
+          --self-contained true
+          -p:Version=${{ steps.ver.outputs.version }}
+          -p:PublishSingleFile=true
+          -p:PublishTrimmed=true
+          -o publish
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Compile installer (ISCC)
+        shell: pwsh
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          & "$iscc" "installer\glow.iss" `
+            "/DAppVersion=${{ steps.ver.outputs.version }}" `
+            "/DSourceExe=$PWD\publish\Glow.exe"
+
+      - name: Stage portable exe
+        shell: pwsh
+        run: Copy-Item publish/Glow.exe "installer/Output/Glow-${{ steps.ver.outputs.version }}-portable.exe"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Glow
+          path: installer/Output/*.exe
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Glow ${{ steps.ver.outputs.version }}
+          generate_release_notes: true
+          files: installer/Output/*.exe

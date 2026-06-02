@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="256" height="256" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+  <!-- Glow — minimalist tray logo: white "glow" on a black rounded square -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1c1c1e"/>
+      <stop offset="1" stop-color="#000000"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="256" height="256" rx="56" ry="56" fill="url(#bg)"/>
+  <text x="128" y="128"
+        font-family="Segoe UI, Helvetica, Arial, sans-serif"
+        font-size="104"
+        font-weight="600"
+        letter-spacing="-4"
+        fill="#ffffff"
+        text-anchor="middle"
+        dominant-baseline="central">glow</text>
+</svg>
