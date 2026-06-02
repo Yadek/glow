@@ -1,6 +1,7 @@
 using Glow.Localization;
 using Glow.Monitors;
 using Glow.Startup;
+using Glow.Update;
 
 namespace Glow.UI;
 
@@ -12,6 +13,7 @@ public sealed class TrayContext : ApplicationContext
     private readonly MonitorManager _monitors = new();
     private readonly BrightnessPopup _popup;
     private readonly ToolStripMenuItem _startupItem;
+    private bool _updateChecking;
 
     public TrayContext()
     {
@@ -25,6 +27,7 @@ public sealed class TrayContext : ApplicationContext
             CheckOnClick = true,
         };
         menu.Items.Add(_startupItem);
+        menu.Items.Add(new ToolStripMenuItem(Strings.CheckUpdates, null, async (_, _) => await CheckForUpdatesAsync(manual: true)));
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(new ToolStripMenuItem(Strings.Exit, null, OnExit));
 
@@ -36,6 +39,8 @@ public sealed class TrayContext : ApplicationContext
             ContextMenuStrip = menu,
         };
         _tray.MouseClick += OnTrayClick;
+
+        ScheduleStartupUpdateCheck();
     }
 
     private void OnTrayClick(object? sender, MouseEventArgs e)
@@ -56,6 +61,57 @@ public sealed class TrayContext : ApplicationContext
     {
         StartupManager.SetEnabled(_startupItem.Checked);
         _startupItem.Checked = StartupManager.IsEnabled();
+    }
+
+    // Check once a few seconds after launch, on the UI thread (message pump running).
+    private void ScheduleStartupUpdateCheck()
+    {
+        var timer = new System.Windows.Forms.Timer { Interval = 4000 };
+        timer.Tick += async (_, _) =>
+        {
+            timer.Stop();
+            timer.Dispose();
+            await CheckForUpdatesAsync(manual: false);
+        };
+        timer.Start();
+    }
+
+    private async Task CheckForUpdatesAsync(bool manual)
+    {
+        if (_updateChecking) return;
+        _updateChecking = true;
+        try
+        {
+            var info = await Updater.CheckAsync();
+            if (info is null)
+            {
+                if (manual)
+                {
+                    MessageBox.Show(Strings.UpToDate, Strings.TrayTooltip,
+                        MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+                return;
+            }
+
+            var answer = MessageBox.Show(Strings.UpdateAvailable(info.Tag), Strings.TrayTooltip,
+                MessageBoxButtons.YesNo, MessageBoxIcon.Information);
+            if (answer != DialogResult.Yes) return;
+
+            string? installer = await Updater.DownloadAsync(info);
+            if (installer is null)
+            {
+                MessageBox.Show(Strings.UpdateDownloadFailed, Strings.TrayTooltip,
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            _tray.Visible = false;
+            Updater.RunInstallerAndExit(installer);
+        }
+        finally
+        {
+            _updateChecking = false;
+        }
     }
 
     private void OnExit(object? sender, EventArgs e)

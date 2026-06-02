@@ -60,9 +60,11 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; \
     Tasks: autostart; Flags: uninsdeletevalue
 
 [Run]
-; Launch Glow right after install (non-blocking, no UI window).
+; Interactive install: optional "launch now" checkbox on the finish page.
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; \
-    Flags: nowait postinstall skipifsilent
+    Flags: nowait postinstall skipifsilent runasoriginaluser
+; Silent install (used by the in-app auto-updater): always relaunch as the user.
+Filename: "{app}\{#AppExe}"; Flags: nowait runasoriginaluser; Check: WizardSilent
 
 [UninstallRun]
 ; Make sure the running instance is closed before files are removed.
@@ -83,8 +85,17 @@ russian.AutostartGroup=Автозагрузка:
 russian.AdditionalIcons=Дополнительные ярлыки:
 
 [Code]
-// Belt-and-suspenders: explicitly delete the Run value on uninstall in case the
-// task wasn't selected at install time but was later enabled from the app menu.
+// Close a running Glow before overwriting its files (e.g. during auto-update).
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ResultCode: Integer;
+begin
+  Exec(ExpandConstant('{cmd}'), '/C taskkill /IM Glow.exe /F', '',
+    SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Result := '';
+end;
+
+// Also remove the autostart value on uninstall in case it was enabled from the app menu.
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usUninstall then

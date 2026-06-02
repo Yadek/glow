@@ -28,6 +28,20 @@ public static class Strings
 
     public static string Exit => Pick("Exit", "Выход");
 
+    public static string CheckUpdates => Pick("Check for updates", "Проверить обновления");
+
+    public static string UpdateAvailable(string version) => Pick(
+        $"Glow {version} is available. Update now?",
+        $"Доступна новая версия Glow {version}. Обновить сейчас?");
+
+    public static string UpToDate => Pick(
+        "You have the latest version.",
+        "Установлена последняя версия.");
+
+    public static string UpdateDownloadFailed => Pick(
+        "Could not download the update. Please try again later.",
+        "Не удалось скачать обновление. Попробуйте позже.");
+
     // Fallback label when a monitor has no name.
     public static string Display(int index) => Pick($"Display {index}", $"Монитор {index}");
 }
