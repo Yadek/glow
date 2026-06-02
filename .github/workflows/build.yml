@@ -34,7 +34,7 @@ jobs:
       - name: Restore
         run: dotnet restore src/Glow/Glow.csproj
 
-      - name: Publish (self-contained, single-file, trimmed)
+      - name: Publish (self-contained single-file)
         run: >
           dotnet publish src/Glow/Glow.csproj
           -c Release
@@ -42,7 +42,6 @@ jobs:
           --self-contained true
           -p:Version=${{ steps.ver.outputs.version }}
           -p:PublishSingleFile=true
-          -p:PublishTrimmed=true
           -o publish
 
       - name: Install Inno Setup
