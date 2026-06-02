@@ -25,15 +25,27 @@ public static class GlowIcon
 
             // "glow" scaled to fit; for tiny tray sizes a single "g" reads better.
             string text = size >= 24 ? "glow" : "g";
-            float fontSize = size * (size >= 24 ? 0.42f : 0.6f);
-            using var font = new Font("Segoe UI", fontSize, FontStyle.Bold, GraphicsUnit.Pixel);
             using var fg = new SolidBrush(Color.White);
-            using var fmt = new StringFormat
+            using var fmt = new StringFormat(StringFormat.GenericTypographic)
             {
                 Alignment = StringAlignment.Center,
                 LineAlignment = StringAlignment.Center,
+                FormatFlags = StringFormatFlags.NoWrap,
             };
+
+            // Shrink the font until "glow" fits on one line in the square.
+            float target = size * 0.82f;
+            float fontSize = size * (size >= 24 ? 0.42f : 0.6f);
+            var font = new Font("Segoe UI", fontSize, FontStyle.Bold, GraphicsUnit.Pixel);
+            float measured = g.MeasureString(text, font, PointF.Empty, fmt).Width;
+            if (measured > target)
+            {
+                fontSize *= target / measured;
+                font.Dispose();
+                font = new Font("Segoe UI", fontSize, FontStyle.Bold, GraphicsUnit.Pixel);
+            }
             g.DrawString(text, font, fg, new RectangleF(0, 0, size, size), fmt);
+            font.Dispose();
         }
 
         IntPtr hIcon = bmp.GetHicon();

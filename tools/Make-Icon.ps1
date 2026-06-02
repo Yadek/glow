@@ -31,12 +31,23 @@ function New-GlowBitmap([int]$size) {
     $g.FillPath($bg, $path)
 
     $text = if ($size -ge 24) { "glow" } else { "g" }
-    $fontSize = if ($size -ge 24) { [float]($size * 0.42) } else { [float]($size * 0.6) }
-    $font = New-Object System.Drawing.Font("Segoe UI", $fontSize, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
     $fg = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::White)
-    $fmt = New-Object System.Drawing.StringFormat
+    $fmt = New-Object System.Drawing.StringFormat ([System.Drawing.StringFormat]::GenericTypographic)
     $fmt.Alignment = [System.Drawing.StringAlignment]::Center
     $fmt.LineAlignment = [System.Drawing.StringAlignment]::Center
+    $fmt.FormatFlags = [System.Drawing.StringFormatFlags]::NoWrap
+
+    # Auto-fit the font so "glow" always stays on one line inside the square.
+    $target = [float]($size * 0.82)
+    $fontSize = if ($size -ge 24) { [float]($size * 0.42) } else { [float]($size * 0.6) }
+    $font = New-Object System.Drawing.Font("Segoe UI", $fontSize, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
+    $measured = $g.MeasureString($text, $font, (New-Object System.Drawing.PointF(0, 0)), $fmt).Width
+    if ($measured -gt $target) {
+        $fontSize = $fontSize * $target / $measured
+        $font.Dispose()
+        $font = New-Object System.Drawing.Font("Segoe UI", $fontSize, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
+    }
+
     $layout = New-Object System.Drawing.RectangleF(0, 0, $size, $size)
     $g.DrawString($text, $font, $fg, $layout, $fmt)
 
