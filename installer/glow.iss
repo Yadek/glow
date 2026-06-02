@@ -65,6 +65,8 @@ Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; \
     Flags: nowait postinstall skipifsilent runasoriginaluser
 ; Silent install (used by the in-app auto-updater): always relaunch as the user.
 Filename: "{app}\{#AppExe}"; Flags: nowait runasoriginaluser; Check: WizardSilent
+; Refresh the shell icon cache so the updated icon shows immediately.
+Filename: "{sys}\ie4uinit.exe"; Parameters: "-show"; Flags: runhidden runasoriginaluser skipifdoesntexist
 
 [UninstallRun]
 ; Make sure the running instance is closed before files are removed.

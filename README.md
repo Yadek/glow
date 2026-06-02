@@ -22,11 +22,13 @@
 
 - **True hardware brightness** — drives external monitors over **DDC/CI** (`Dxva2.dll`), not a software overlay.
 - **Multi-monitor** — auto-detects every connected display and shows a separate slider for each, labelled with the real model name (read from EDID).
+- **Night light** — toggle the Windows Night light and adjust its intensity from the popup; stays in sync with Windows.
 - **Near-zero footprint** — no background timers or polling; the app sleeps in the message loop and only wakes on a click. Idle CPU ≈ 0%.
 - **Single self-contained `.exe`** — no .NET runtime to install.
 - **Auto localization** — UI follows the Windows display language (English / Русский), English fallback.
 - **Matches your theme** — the slider uses the current Windows accent color.
 - **Silent autostart** — optional launch with Windows via `HKCU\…\Run`.
+- **Auto-update** — checks GitHub Releases and updates itself on your confirmation.
 - **Clean uninstall** — removes the app, the autostart key and all config; leaves no trace.
 
 ## How it works

@@ -11,7 +11,7 @@
 
     <AssemblyName>Glow</AssemblyName>
     <RootNamespace>Glow</RootNamespace>
-    <Version>1.0.2</Version>
+    <Version>1.0.3</Version>
     <Company>Glow</Company>
     <Product>Glow</Product>
     <Description>Tray utility for hardware monitor brightness (DDC/CI).</Description>

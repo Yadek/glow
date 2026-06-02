@@ -2,6 +2,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using Glow.Localization;
 using Glow.Monitors;
+using Glow.NightShift;
 
 namespace Glow.UI;
 
@@ -40,6 +41,10 @@ public sealed class BrightnessPopup : Form
     private int _finalTop;
     private DateTime _lastHide = DateTime.MinValue;
 
+    // Debounce night-light intensity writes while dragging the slider.
+    private readonly System.Windows.Forms.Timer _nlApply = new() { Interval = 120 };
+    private int _nlPending = -1;
+
     public BrightnessPopup(MonitorManager monitors)
     {
         _monitors = monitors;
@@ -54,6 +59,11 @@ public sealed class BrightnessPopup : Form
         Font = new Font("Segoe UI", 9f);
 
         _anim.Tick += OnAnimTick;
+        _nlApply.Tick += (_, _) =>
+        {
+            _nlApply.Stop();
+            if (_nlPending >= 0) NightLight.SetIntensity(_nlPending);
+        };
     }
 
     // Toggle from a tray click: open if closed, close if open. The short guard
@@ -188,9 +198,86 @@ public sealed class BrightnessPopup : Form
             y -= S(LCardGap); // no gap after the last card
         }
 
+        if (NightLight.IsSupported)
+        {
+            y += S(LCardGap);
+            Controls.Add(BuildNightLightCard(new Rectangle(S(LPadX), y, contentWidth, S(LCardH))));
+            y += S(LCardH);
+        }
+
         y += S(LPadBottom);
         ResumeLayout();
         return y;
+    }
+
+    private Panel BuildNightLightCard(Rectangle bounds)
+    {
+        var card = new Panel { Bounds = bounds, BackColor = CardColor };
+        card.Paint += (_, e) =>
+        {
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            using var brush = new SolidBrush(CardColor);
+            using var path = RoundedPath(new Rectangle(0, 0, card.Width, card.Height), S(LCardRadius));
+            e.Graphics.FillPath(brush, path);
+        };
+        card.Region = new Region(RoundedPath(new Rectangle(0, 0, card.Width, card.Height), S(LCardRadius)));
+
+        int innerX = S(LCardInsetX);
+        int innerW = card.Width - innerX * 2;
+        int pillW = S(52), pillH = S(20);
+
+        var title = new Label
+        {
+            Text = Strings.NightLight,
+            ForeColor = TextColor,
+            BackColor = Color.Transparent,
+            Font = MakeFont(12f),
+            AutoSize = false,
+            TextAlign = ContentAlignment.MiddleLeft,
+            Bounds = new Rectangle(innerX, S(10), innerW - pillW - S(6), S(18)),
+        };
+
+        var pill = new Label
+        {
+            AutoSize = false,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Font = MakeFont(10.5f, FontStyle.Bold),
+            Cursor = Cursors.Hand,
+            Bounds = new Rectangle(innerX + innerW - pillW, S(9), pillW, pillH),
+        };
+        pill.Region = new Region(RoundedPath(new Rectangle(0, 0, pillW, pillH), pillH / 2));
+
+        var slider = new BrightnessSlider
+        {
+            Value = Math.Clamp(NightLight.GetIntensity(), 0, 100),
+            Bounds = new Rectangle(innerX, S(38), innerW, S(LSliderH)),
+        };
+
+        void RefreshPill(bool on)
+        {
+            pill.Text = on ? Strings.On : Strings.Off;
+            pill.BackColor = on ? Theme.AccentColor() : Color.FromArgb(70, 70, 78);
+            pill.ForeColor = on ? Color.White : SubtleColor;
+        }
+        RefreshPill(NightLight.IsEnabled());
+
+        pill.Click += (_, _) =>
+        {
+            NightLight.SetEnabled(!NightLight.IsEnabled());
+            RefreshPill(NightLight.IsEnabled());
+        };
+
+        slider.ValueChanged += (_, _) =>
+        {
+            _nlPending = slider.Value;
+            _nlApply.Stop();
+            _nlApply.Start(); // apply shortly after the user stops dragging
+        };
+
+        card.Controls.Add(title);
+        card.Controls.Add(pill);
+        card.Controls.Add(slider);
+        return card;
     }
 
     private Panel BuildMonitorCard(BrightnessMonitor monitor, int index, Rectangle bounds)
@@ -301,6 +388,7 @@ public sealed class BrightnessPopup : Form
         if (disposing)
         {
             _anim.Dispose();
+            _nlApply.Dispose();
         }
         base.Dispose(disposing);
     }

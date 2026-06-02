@@ -32,6 +32,12 @@ public static class Strings
 
     public static string AnimateIcon => Pick("Animate tray icon", "Анимировать иконку в трее");
 
+    public static string NightLight => Pick("Night light", "Ночной свет");
+
+    public static string On => Pick("On", "Вкл");
+
+    public static string Off => Pick("Off", "Выкл");
+
     public static string UpdateAvailable(string version) => Pick(
         $"Glow {version} is available. Update now?",
         $"Доступна новая версия Glow {version}. Обновить сейчас?");
