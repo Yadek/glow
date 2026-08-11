@@ -4,15 +4,18 @@ using Glow.Localization;
 using Glow.Monitors;
 using Glow.Native;
 using Glow.NightShift;
+using Glow.Settings;
 
 namespace Glow.UI;
 
 // Frameless popup shown on tray click.
 //
-// Layout: an optional "all monitors" master card (only with more than one
-// display), then one card per display. Each card has a sun row (hardware
-// brightness over DDC/CI) and a moon row (night mode over gamma). Displays
-// without DDC/CI still get a card, because night mode works on them.
+// Layout: with more than one display, an "all monitors" master card and an
+// expander; the per-display cards appear below it only once expanded. With a
+// single display there is nothing to master, so its card is shown directly.
+// Each card has a sun row (hardware brightness over DDC/CI) and a moon row
+// (night mode over gamma). Displays without DDC/CI still get a card, because
+// night mode works on them.
 //
 // Everything is laid out explicitly and scaled by the DPI of the screen the
 // popup is about to appear on. Hidden (not closed) when it loses focus.
@@ -40,6 +43,7 @@ public sealed class BrightnessPopup : Form
     private const int LPillH = 22;
     private const int LPercentW = 46;
     private const int LMargin = 12;
+    private const int LExpanderH = 30;
 
     // Night rows use a warm amber instead of the accent colour, so the two rows
     // read as different things at a glance.
@@ -64,6 +68,16 @@ public sealed class BrightnessPopup : Form
     private Label? _masterPercent;
     private BrightnessSlider? _masterNight;
     private RoundedPanel? _masterPill;
+
+    // The master sliders own their values instead of following the displays.
+    // Adjusting one screen must not drag the master along with it — that is the
+    // whole point of having a separate "everything at once" control.
+    private int _masterBrightnessValue = AppSettings.UnsetMaster;
+    private int _masterNightValue = AppSettings.UnsetMaster;
+    private bool _masterDirty;
+
+    private bool _expanded = AppSettings.PopupExpanded;
+    private Screen? _screen; // the screen we were laid out for, for re-anchoring
 
     // Fade + slide animation state.
     private const int SlideOffset = 14;       // logical px the popup rises while fading in
@@ -147,14 +161,30 @@ public sealed class BrightnessPopup : Form
         BackColor = Theme.FormBg;
         ApplyWindowAttributes();
 
+        _screen = screen;
         _displays.Refresh();
         NightMode.Reapply(); // picks up hot-plugged displays and their saved settings
+        SeedMasterValues();
 
-        int height = BuildContent();
+        ResizeToContent(screen, BuildContent());
 
-        Rectangle work = screen.WorkingArea;
+        // Start transparent and slightly lower, then fade + slide up.
+        Opacity = 0;
+        Top = _finalTop + S(SlideOffset);
+        _animProgress = 0;
+        _animDir = 1;
+
+        Show();
+        Activate();
+        _anim.Start();
+    }
+
+    // Sizes the window to the freshly built content and re-anchors it. Called both
+    // when opening and when the expander changes how tall the content is.
+    private void ResizeToContent(Screen screen, int height)
+    {
         int margin = S(LMargin);
-        int maxHeight = work.Height - margin * 2;
+        int maxHeight = screen.WorkingArea.Height - margin * 2;
 
         Width = S(LWidth);
         if (height > maxHeight)
@@ -170,16 +200,56 @@ public sealed class BrightnessPopup : Form
         }
 
         (Left, _finalTop) = AnchorPosition(screen, margin);
+    }
 
-        // Start transparent and slightly lower, then fade + slide up.
-        Opacity = 0;
-        Top = _finalTop + S(SlideOffset);
-        _animProgress = 0;
-        _animDir = 1;
+    // The master sliders remember what the user last set them to. On open they
+    // adopt the displays' value only when every display already agrees, so the
+    // number stays honest without ever moving mid-adjustment.
+    private void SeedMasterValues()
+    {
+        _masterBrightnessValue = Seed(
+            _masterBrightnessValue == AppSettings.UnsetMaster
+                ? AppSettings.MasterBrightness
+                : _masterBrightnessValue,
+            _displays.Displays.Where(d => d.SupportsBrightness)
+                              .Select(d => Math.Clamp(d.Brightness!.Percent, 0, 100)));
 
-        Show();
-        Activate();
-        _anim.Start();
+        _masterNightValue = Seed(
+            _masterNightValue == AppSettings.UnsetMaster
+                ? AppSettings.MasterNightIntensity
+                : _masterNightValue,
+            _displays.Displays.Select(d => NightMode.Get(d.Key).Intensity));
+    }
+
+    private static int Seed(int current, IEnumerable<int> displayValues)
+    {
+        var values = displayValues.ToList();
+        if (values.Count > 0 && values.Distinct().Count() == 1)
+        {
+            return values[0];
+        }
+        if (current != AppSettings.UnsetMaster)
+        {
+            return current;
+        }
+        return values.Count == 0 ? 0 : (int)Math.Round(values.Average());
+    }
+
+    // Written on hide rather than on every slider tick, which would hammer the
+    // registry while dragging.
+    private void PersistMasterValues()
+    {
+        if (!_masterDirty) return;
+        _masterDirty = false;
+
+        if (_masterBrightnessValue != AppSettings.UnsetMaster)
+        {
+            AppSettings.MasterBrightness = _masterBrightnessValue;
+        }
+        if (_masterNightValue != AppSettings.UnsetMaster)
+        {
+            AppSettings.MasterNightIntensity = _masterNightValue;
+        }
     }
 
     // Places the popup in the corner the tray actually lives in, on the screen the
@@ -240,6 +310,7 @@ public sealed class BrightnessPopup : Form
             _anim.Stop();
             Opacity = 0;
             _lastHide = DateTime.UtcNow;
+            PersistMasterValues();
             base.Hide();
             return;
         }
@@ -298,25 +369,35 @@ public sealed class BrightnessPopup : Form
                 TextAlign = ContentAlignment.MiddleLeft,
                 Bounds = new Rectangle(S(LPadX) + S(4), y, contentWidth, S(40)),
             });
+            ResumeLayout(); // BuildContent runs again on every open; don't leak a suspend
             return y + S(40) + S(LPadBottom);
         }
 
-        // The master card only earns its space when there's more than one display.
-        if (displays.Count > 1)
+        // With a single display there is nothing to master: show its card directly
+        // and skip the expander entirely.
+        bool hasMaster = displays.Count > 1;
+
+        if (hasMaster)
         {
             bool anyBrightness = displays.Any(d => d.SupportsBrightness);
             int h = CardHeight(anyBrightness);
             Controls.Add(BuildMasterCard(new Rectangle(S(LPadX), y, contentWidth, h), anyBrightness));
             y += h + S(LCardGap);
+
+            Controls.Add(BuildExpander(new Rectangle(S(LPadX), y, contentWidth, S(LExpanderH))));
+            y += S(LExpanderH) + S(LCardGap);
         }
 
-        foreach (var display in displays)
+        if (!hasMaster || _expanded)
         {
-            int h = CardHeight(display.SupportsBrightness);
-            Controls.Add(BuildDisplayCard(display, new Rectangle(S(LPadX), y, contentWidth, h)));
-            y += h + S(LCardGap);
+            foreach (var display in displays)
+            {
+                int h = CardHeight(display.SupportsBrightness);
+                Controls.Add(BuildDisplayCard(display, new Rectangle(S(LPadX), y, contentWidth, h)));
+                y += h + S(LCardGap);
+            }
         }
-        y -= S(LCardGap); // no gap after the last card
+        y -= S(LCardGap); // no gap after the last element
 
         RefreshNightVisuals();
 
@@ -380,6 +461,68 @@ public sealed class BrightnessPopup : Form
         Bounds = new Rectangle(x, y + (S(LRowH) - S(LPillH)) / 2, S(LPillW), S(LPillH)),
     };
 
+    // The row that reveals / hides the per-display cards. Built as a card-coloured
+    // strip so it reads as something you can press.
+    private RoundedPanel BuildExpander(Rectangle bounds)
+    {
+        var strip = NewCard(bounds);
+        strip.Cursor = Cursors.Hand;
+
+        int innerX = S(LCardInsetX);
+        int glyphSize = S(LGlyphW);
+
+        var chevron = new GlyphIcon
+        {
+            Kind = _expanded ? GlyphKind.ChevronUp : GlyphKind.ChevronDown,
+            ForeColor = Theme.Subtle,
+            BackColor = Theme.CardBg,
+            Bounds = new Rectangle(innerX, (bounds.Height - glyphSize) / 2, glyphSize, glyphSize),
+        };
+        strip.Controls.Add(chevron);
+
+        int labelX = innerX + glyphSize + S(LGlyphGap);
+        var label = new Label
+        {
+            Text = _expanded ? Strings.Collapse : Strings.EachMonitor,
+            ForeColor = Theme.Subtle,
+            BackColor = Theme.CardBg,
+            Font = MakeFont(11.5f),
+            AutoSize = false,
+            AutoEllipsis = true,
+            TextAlign = ContentAlignment.MiddleLeft,
+            Cursor = Cursors.Hand,
+            Bounds = new Rectangle(labelX, 0, bounds.Width - labelX - innerX, bounds.Height),
+        };
+        strip.Controls.Add(label);
+
+        // The glyph is disabled, so its clicks fall through to the strip; the label
+        // takes its own, hence both handlers.
+        strip.Click += (_, _) => ToggleExpanded();
+        label.Click += (_, _) => ToggleExpanded();
+
+        return strip;
+    }
+
+    private void ToggleExpanded()
+    {
+        _expanded = !_expanded;
+        AppSettings.PopupExpanded = _expanded;
+
+        // The rebuild disposes the strip that raised this click, so let the click
+        // finish unwinding before pulling the control out from under it.
+        BeginInvoke(Relayout);
+    }
+
+    private void Relayout()
+    {
+        Screen screen = _screen ?? Screen.FromControl(this);
+        ResizeToContent(screen, BuildContent());
+
+        // Already on screen, so land on the final position instead of re-running
+        // the entrance slide from below.
+        Top = _finalTop;
+    }
+
     private RoundedPanel BuildMasterCard(Rectangle bounds, bool withBrightnessRow)
     {
         var card = NewCard(bounds);
@@ -390,15 +533,9 @@ public sealed class BrightnessPopup : Form
         int y = S(LCardPadTop);
         card.Controls.Add(NewHeaderLabel(Strings.AllMonitors, innerX, y, innerW - S(LPercentW)));
 
-        var supported = _displays.Displays.Where(d => d.SupportsBrightness).ToList();
-
         if (withBrightnessRow)
         {
-            int average = supported.Count == 0
-                ? 0
-                : (int)Math.Round(supported.Average(d => d.Brightness!.Percent));
-
-            _masterPercent = NewPercentLabel(average + "%", innerX + innerW - S(LPercentW), y);
+            _masterPercent = NewPercentLabel(_masterBrightnessValue + "%", innerX + innerW - S(LPercentW), y);
             card.Controls.Add(_masterPercent);
         }
 
@@ -414,9 +551,7 @@ public sealed class BrightnessPopup : Form
                 BackColor = Theme.CardBg,
                 Bounds = new Rectangle(sliderX, y + (S(LRowH) - S(20)) / 2, innerW - (sliderX - innerX), S(20)),
             };
-            _masterBrightness.SetValueQuiet(supported.Count == 0
-                ? 0
-                : (int)Math.Round(supported.Average(d => d.Brightness!.Percent)));
+            _masterBrightness.SetValueQuiet(_masterBrightnessValue);
             _masterBrightness.ValueChanged += (_, _) => OnMasterBrightnessChanged(_masterBrightness.Value);
             card.Controls.Add(_masterBrightness);
             y += S(LRowH);
@@ -441,7 +576,7 @@ public sealed class BrightnessPopup : Form
             BackColor = Theme.CardBg,
             Bounds = new Rectangle(sliderX, y + (S(LRowH) - S(20)) / 2, nightWidth, S(20)),
         };
-        _masterNight.SetValueQuiet(NightMode.RepresentativeIntensity);
+        _masterNight.SetValueQuiet(_masterNightValue);
         _masterNight.ValueChanged += (_, _) => OnMasterNightIntensityChanged(_masterNight.Value);
         card.Controls.Add(_masterNight);
 
@@ -504,7 +639,8 @@ public sealed class BrightnessPopup : Form
                 int value = row.Brightness!.Value;
                 row.PercentLabel!.Text = value + "%";      // instant, on the UI thread
                 display.Brightness!.RequestPercent(value); // throttled hardware write off-thread
-                SyncMasterBrightness();
+                // Deliberately does not touch the master slider: it is a control
+                // for setting everything at once, not a readout of the average.
             };
             card.Controls.Add(row.Brightness);
             y += S(LRowH);
@@ -552,33 +688,34 @@ public sealed class BrightnessPopup : Form
 
     private void OnMasterBrightnessChanged(int value)
     {
+        _masterBrightnessValue = value;
+        _masterDirty = true;
+
         if (_masterPercent is not null)
         {
             _masterPercent.Text = value + "%";
         }
+
+        // Drive every display, not just the visible rows: when collapsed there are
+        // no rows at all, and the master still has to work.
+        foreach (var display in _displays.Displays)
+        {
+            display.Brightness?.RequestPercent(value);
+        }
+
         foreach (var row in _rows)
         {
             if (row.Brightness is null) continue;
             row.Brightness.SetValueQuiet(value);
             row.PercentLabel!.Text = value + "%";
-            row.Target.Brightness!.RequestPercent(value);
         }
-    }
-
-    private void SyncMasterBrightness()
-    {
-        if (_masterBrightness is null || _masterPercent is null) return;
-
-        var values = _rows.Where(r => r.Brightness is not null).Select(r => r.Brightness!.Value).ToList();
-        if (values.Count == 0) return;
-
-        int average = (int)Math.Round(values.Average());
-        _masterBrightness.SetValueQuiet(average);
-        _masterPercent.Text = average + "%";
     }
 
     private void OnMasterNightIntensityChanged(int value)
     {
+        _masterNightValue = value;
+        _masterDirty = true;
+
         NightMode.SetAllIntensity(value);
         if (NightMode.AllEnabled != true)
         {
@@ -607,7 +744,8 @@ public sealed class BrightnessPopup : Form
         }
         if (_masterNight is not null)
         {
-            _masterNight.SetValueQuiet(NightMode.RepresentativeIntensity);
+            // Its value is the user's, not a running average — only the muted look
+            // tracks the displays.
             _masterNight.Muted = NightMode.AllEnabled is false;
         }
     }
@@ -699,6 +837,7 @@ public sealed class BrightnessPopup : Form
     {
         if (disposing)
         {
+            PersistMasterValues(); // exiting with the popup still open
             _anim.Dispose();
             ResetFonts();
         }

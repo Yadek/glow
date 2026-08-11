@@ -144,21 +144,6 @@ public static class NightMode
         }
     }
 
-    /// <summary>Intensity to show on the master slider: the shared value, else the average.</summary>
-    public static int RepresentativeIntensity
-    {
-        get
-        {
-            lock (Gate)
-            {
-                if (_displays.Count == 0) return AppSettings.DefaultNightIntensity;
-                int sum = 0;
-                foreach (var d in _displays) sum += Get(d.Key).Intensity;
-                return sum / _displays.Count;
-            }
-        }
-    }
-
     public static void SetAllEnabled(bool enabled)
     {
         lock (Gate)

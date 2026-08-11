@@ -42,6 +42,11 @@ public static class Strings
     /// <summary>Explains why a display has no brightness slider.</summary>
     public static string NoDdcHint => Pick("no DDC/CI", "нет DDC/CI");
 
+    /// <summary>Expander that reveals the per-monitor cards.</summary>
+    public static string EachMonitor => Pick("Each monitor separately", "Каждый монитор отдельно");
+
+    public static string Collapse => Pick("Collapse", "Свернуть");
+
     public static string ToggleNightAll => Pick(
         "Night mode on all monitors",
         "Ночной режим на всех мониторах");

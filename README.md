@@ -34,7 +34,9 @@
 
 ## How it works
 
-Click the **Glow** icon in the system tray (next to the volume icon) → a popup appears with one card per monitor. Each card has a **sun row** (hardware brightness over DDC/CI) and a **moon row** (night mode). With more than one display, an **All monitors** card on top drives every screen at once; its night pill reads *Mixed* when your screens disagree.
+Click the **Glow** icon in the system tray (next to the volume icon) → a popup appears with an **All monitors** card that drives every screen at once. Press **Each monitor separately** to unfold a card per display, and again to fold them away; the popup remembers which way you left it.
+
+Every card has a **sun row** (hardware brightness over DDC/CI) and a **moon row** (night mode). The master sliders keep the value *you* set them to — adjusting one screen on its own never drags them along, so the master stays something you aim rather than a running average. Its night pill reads *Mixed* when your screens disagree.
 
 Right-click the icon for **Night mode on all monitors**, **Run at startup** and **Exit**. Middle-click toggles night mode everywhere without opening the popup.
 

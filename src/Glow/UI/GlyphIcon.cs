@@ -7,6 +7,8 @@ public enum GlyphKind
 {
     Sun,
     Moon,
+    ChevronDown,
+    ChevronUp,
 }
 
 // The little sun / moon marker in front of each slider row. Drawn with GDI+
@@ -38,14 +40,40 @@ public sealed class GlyphIcon : Control
         float cy = Height / 2f;
 
         using var brush = new SolidBrush(ForeColor);
-        if (Kind == GlyphKind.Sun)
+        switch (Kind)
         {
-            DrawSun(g, brush, cx, cy, size);
+            case GlyphKind.Sun:
+                DrawSun(g, brush, cx, cy, size);
+                break;
+            case GlyphKind.Moon:
+                DrawMoon(g, brush, cx, cy, size);
+                break;
+            default:
+                DrawChevron(g, brush, cx, cy, size, down: Kind == GlyphKind.ChevronDown);
+                break;
         }
-        else
+    }
+
+    private static void DrawChevron(Graphics g, Brush brush, float cx, float cy, float size, bool down)
+    {
+        float halfW = size * 0.28f;
+        float halfH = size * 0.15f;
+        float thickness = Math.Max(1.2f, size * 0.11f);
+
+        using var pen = new Pen(brush, thickness)
         {
-            DrawMoon(g, brush, cx, cy, size);
-        }
+            StartCap = LineCap.Round,
+            EndCap = LineCap.Round,
+            LineJoin = LineJoin.Round,
+        };
+
+        float tip = down ? halfH : -halfH;
+        g.DrawLines(pen, new[]
+        {
+            new PointF(cx - halfW, cy - tip),
+            new PointF(cx,         cy + tip),
+            new PointF(cx + halfW, cy - tip),
+        });
     }
 
     private static void DrawSun(Graphics g, Brush brush, float cx, float cy, float size)

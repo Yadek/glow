@@ -15,11 +15,41 @@ public static class AppSettings
 
     public const int DefaultNightIntensity = 50;
 
+    /// <summary>Sentinel for a master slider the user has never touched.</summary>
+    public const int UnsetMaster = -1;
+
     public static bool AnimateTrayIcon
     {
         get => GetInt(KeyPath, "AnimateTrayIcon") != 0;
         set => SetInt(KeyPath, "AnimateTrayIcon", value ? 1 : 0);
     }
+
+    /// <summary>Whether the popup shows the per-monitor cards or just the master card.</summary>
+    public static bool PopupExpanded
+    {
+        get => GetInt(KeyPath, "PopupExpanded") != 0;
+        set => SetInt(KeyPath, "PopupExpanded", value ? 1 : 0);
+    }
+
+    // The master sliders keep their own values rather than tracking the average of
+    // the displays: the point of the master is to set everything at once, and a
+    // control that drifts every time one display is adjusted is confusing to aim.
+
+    public static int MasterBrightness
+    {
+        get => Clamp(GetInt(KeyPath, "MasterBrightness", UnsetMaster));
+        set => SetInt(KeyPath, "MasterBrightness", Math.Clamp(value, 0, 100));
+    }
+
+    public static int MasterNightIntensity
+    {
+        get => Clamp(GetInt(KeyPath, "MasterNightIntensity", UnsetMaster));
+        set => SetInt(KeyPath, "MasterNightIntensity", Math.Clamp(value, 0, 100));
+    }
+
+    // Keeps the "never set" sentinel intact while clamping any real value.
+    private static int Clamp(int stored)
+        => stored == UnsetMaster ? UnsetMaster : Math.Clamp(stored, 0, 100);
 
     // ----- per-display night mode -----
 
