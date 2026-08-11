@@ -4,6 +4,7 @@ using Glow.NightShift;
 using Glow.Settings;
 using Glow.Startup;
 using Glow.Update;
+using Microsoft.Win32;
 
 namespace Glow.UI;
 
@@ -13,23 +14,29 @@ namespace Glow.UI;
 public sealed class TrayContext : ApplicationContext
 {
     private readonly NotifyIcon _tray;
-    private readonly MonitorManager _monitors = new();
+    private readonly DisplayManager _displays = new();
     private readonly BrightnessPopup _popup;
     private readonly ToolStripMenuItem _startupItem;
     private readonly ToolStripMenuItem _animateItem;
+    private readonly ToolStripMenuItem _nightItem;
     private readonly int _iconSize;
 
     private System.Windows.Forms.Timer? _iconAnim;
+    private System.Threading.Timer? _resumeRetry;
     private double _iconPhase;
     private bool _updateChecking;
 
     public TrayContext()
     {
-        _popup = new BrightnessPopup(_monitors);
+        _popup = new BrightnessPopup(_displays);
         _iconSize = SystemInformation.SmallIconSize.Width <= 16 ? 16 : 32;
 
         var menu = new ContextMenuStrip();
 
+        _nightItem = new ToolStripMenuItem(Strings.ToggleNightAll, null, OnToggleNightAll)
+        {
+            CheckOnClick = false,
+        };
         _startupItem = new ToolStripMenuItem(Strings.RunAtStartup, null, OnToggleStartup)
         {
             Checked = StartupManager.IsEnabled(),
@@ -41,6 +48,10 @@ public sealed class TrayContext : ApplicationContext
             CheckOnClick = true,
         };
 
+        menu.Opening += (_, _) => _nightItem.Checked = NightMode.AllEnabled == true;
+
+        menu.Items.Add(_nightItem);
+        menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(_startupItem);
         menu.Items.Add(_animateItem);
         menu.Items.Add(new ToolStripMenuItem(Strings.CheckUpdates, null, async (_, _) => await CheckForUpdatesAsync(manual: true)));
@@ -61,22 +72,95 @@ public sealed class TrayContext : ApplicationContext
             StartIconAnimation();
         }
 
-        NightLight.Initialize(); // re-apply saved night mode (gamma resets each session)
-        ScheduleStartupUpdateCheck();
+        NightMode.Initialize(); // re-apply saved per-display night mode
+        HookSystemEvents();
+
+        if (BuildInfo.AutoUpdateCheckEnabled)
+        {
+            ScheduleStartupUpdateCheck();
+        }
     }
 
     private void OnTrayClick(object? sender, MouseEventArgs e)
     {
-        if (e.Button == MouseButtons.Left)
+        switch (e.Button)
         {
-            _popup.ToggleFromTray();
+            case MouseButtons.Left:
+                _popup.ToggleFromTray();
+                break;
+            case MouseButtons.Middle:
+                // Quick "warm everything / cool everything" without opening the popup.
+                NightMode.ToggleAll();
+                break;
         }
     }
+
+    private void OnToggleNightAll(object? sender, EventArgs e) => NightMode.ToggleAll();
 
     private void OnToggleStartup(object? sender, EventArgs e)
     {
         StartupManager.SetEnabled(_startupItem.Checked);
         _startupItem.Checked = StartupManager.IsEnabled();
+    }
+
+    // ----- keeping night mode applied -----
+
+    // Gamma ramps are volatile: Windows drops them on resume, when the display
+    // topology changes and across session switches. Without re-applying, night
+    // mode silently disappears until the user re-toggles it.
+    private void HookSystemEvents()
+    {
+        SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
+        SystemEvents.PowerModeChanged += OnPowerModeChanged;
+        SystemEvents.SessionSwitch += OnSessionSwitch;
+        SystemEvents.SessionEnding += OnSessionEnding;
+    }
+
+    private void UnhookSystemEvents()
+    {
+        SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
+        SystemEvents.PowerModeChanged -= OnPowerModeChanged;
+        SystemEvents.SessionSwitch -= OnSessionSwitch;
+        SystemEvents.SessionEnding -= OnSessionEnding;
+    }
+
+    // NightMode is thread-safe, so these handlers can run on the SystemEvents
+    // thread directly. The display cache is invalidated so the next popup open
+    // re-acquires DDC/CI handles for whatever is attached now.
+    private void OnDisplaySettingsChanged(object? sender, EventArgs e)
+    {
+        _displays.Invalidate();
+        NightMode.Reapply();
+    }
+
+    private void OnPowerModeChanged(object? sender, PowerModeChangedEventArgs e)
+    {
+        if (e.Mode != PowerModes.Resume) return;
+
+        _displays.Invalidate();
+        NightMode.Reapply();
+
+        // Displays often come back a beat after the resume event, and a ramp
+        // applied to a display that isn't awake yet is lost. Try once more shortly.
+        _resumeRetry?.Dispose();
+        _resumeRetry = new System.Threading.Timer(
+            _ => NightMode.Reapply(), null, dueTime: 3000, period: Timeout.Infinite);
+    }
+
+    private void OnSessionSwitch(object? sender, SessionSwitchEventArgs e)
+    {
+        if (e.Reason is SessionSwitchReason.SessionUnlock or SessionSwitchReason.ConsoleConnect)
+        {
+            NightMode.Reapply();
+        }
+    }
+
+    // Logging off / shutting down: save anything pending and hand the screens
+    // back untinted.
+    private void OnSessionEnding(object? sender, SessionEndingEventArgs e)
+    {
+        NightMode.Flush();
+        NightMode.RestoreNeutral();
     }
 
     // ----- animated tray icon -----
@@ -166,6 +250,7 @@ public sealed class TrayContext : ApplicationContext
             }
 
             _tray.Visible = false;
+            NightMode.RestoreNeutral();
             Updater.RunInstallerAndExit(installer);
         }
         finally
@@ -177,7 +262,8 @@ public sealed class TrayContext : ApplicationContext
     private void OnExit(object? sender, EventArgs e)
     {
         _tray.Visible = false;
-        NightLight.RestoreNeutral(); // don't leave the screen tinted after we quit
+        NightMode.Flush();          // persist a just-finished slider drag
+        NightMode.RestoreNeutral(); // don't leave the screen tinted after we quit
         ExitThread();
     }
 
@@ -185,11 +271,14 @@ public sealed class TrayContext : ApplicationContext
     {
         if (disposing)
         {
+            // SystemEvents keeps a strong reference to its subscribers.
+            UnhookSystemEvents();
+            _resumeRetry?.Dispose();
             _iconAnim?.Dispose();
             _tray.Icon?.Dispose();
             _tray.Dispose();
             _popup.Dispose();
-            _monitors.Dispose();
+            _displays.Dispose();
         }
         base.Dispose(disposing);
     }

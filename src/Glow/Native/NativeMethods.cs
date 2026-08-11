@@ -97,4 +97,41 @@ internal static class NativeMethods
     [DllImport("dxva2.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool SetMonitorBrightness(IntPtr hMonitor, uint dwNewBrightness);
+
+    // ----- gdi32: per-display gamma ramps (night mode) -----
+
+    // A device context for one display, e.g. CreateDC(null, @"\\.\DISPLAY1", ...).
+    [DllImport("gdi32.dll", CharSet = CharSet.Unicode, EntryPoint = "CreateDCW")]
+    public static extern IntPtr CreateDC(string? driver, string device, string? port, IntPtr data);
+
+    [DllImport("gdi32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool DeleteDC(IntPtr hdc);
+
+    // ramp is 3 * 256 WORDs: red, then green, then blue.
+    [DllImport("gdi32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SetDeviceGammaRamp(IntPtr hdc, ushort[] ramp);
+
+    public const int DISPLAY_DEVICE_ATTACHED_TO_DESKTOP = 0x00000001;
+
+    // ----- per-monitor DPI (so the popup scales for the screen it opens on) -----
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct POINT
+    {
+        public int X;
+        public int Y;
+    }
+
+    public const uint MONITOR_DEFAULTTONEAREST = 0x00000002;
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr MonitorFromPoint(POINT pt, uint dwFlags);
+
+    public const int MDT_EFFECTIVE_DPI = 0;
+
+    // Windows 8.1+. Lets us learn a monitor's DPI without moving a window there.
+    [DllImport("shcore.dll")]
+    public static extern int GetDpiForMonitor(IntPtr hmonitor, int dpiType, out uint dpiX, out uint dpiY);
 }

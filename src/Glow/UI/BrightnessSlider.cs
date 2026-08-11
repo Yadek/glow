@@ -4,18 +4,30 @@ using System.Drawing.Drawing2D;
 namespace Glow.UI;
 
 // Owner-drawn 0–100 slider used instead of the native TrackBar (which ignores
-// the dark theme). Draws relative to its own size, so any DPI works.
+// the dark theme). Draws relative to its own size, so any DPI works. Colours are
+// read from Theme at paint time so a theme switch is picked up on the next open.
 public sealed class BrightnessSlider : Control
 {
     private int _value;
     private bool _dragging;
+    private bool _muted;
 
     public event EventHandler? ValueChanged;
 
-    private static readonly Color TrackColor = Color.FromArgb(72, 72, 80);
-    private readonly Color _fillColor = Theme.AccentColor();   // matches the Windows accent
-    private static readonly Color ThumbColor = Color.White;
-    private static readonly Color ThumbBorder = Color.FromArgb(45, 0, 0, 0);
+    /// <summary>Colour of the filled part. Defaults to the Windows accent colour.</summary>
+    public Color? FillColor { get; set; }
+
+    /// <summary>Draws the slider greyed out (used for a display whose night mode is off).</summary>
+    public bool Muted
+    {
+        get => _muted;
+        set
+        {
+            if (_muted == value) return;
+            _muted = value;
+            Invalidate();
+        }
+    }
 
     public BrightnessSlider()
     {
@@ -37,6 +49,13 @@ public sealed class BrightnessSlider : Control
             Invalidate();
             ValueChanged?.Invoke(this, EventArgs.Empty);
         }
+    }
+
+    /// <summary>Sets the value without raising ValueChanged (used when building the popup).</summary>
+    public void SetValueQuiet(int value)
+    {
+        _value = Math.Clamp(value, 0, 100);
+        Invalidate();
     }
 
     private int ThumbDiameter => Math.Min(Height, Width);
@@ -65,29 +84,32 @@ public sealed class BrightnessSlider : Control
         int trackRight = Width - d / 2;
         int thumbX = ValueToX(_value);
 
+        int capsuleLeft = trackLeft - trackThickness / 2;
+        int capsuleRight = trackRight + trackThickness / 2;
+
+        Color fill = _muted ? Theme.Track : (FillColor ?? Theme.Accent);
+
         // Background track (full width, rounded caps)
-        using (var bg = new SolidBrush(TrackColor))
+        using (var bg = new SolidBrush(Theme.Track))
         {
-            FillCapsule(g, bg, trackLeft - trackThickness / 2, trackY,
-                trackRight + trackThickness / 2 - (trackLeft - trackThickness / 2), trackThickness);
+            FillCapsule(g, bg, capsuleLeft, trackY, capsuleRight - capsuleLeft, trackThickness);
         }
 
         // Filled portion up to the thumb
-        using (var fill = new SolidBrush(_fillColor))
+        if (!_muted)
         {
-            int fillRight = thumbX;
-            FillCapsule(g, fill, trackLeft - trackThickness / 2, trackY,
-                fillRight - (trackLeft - trackThickness / 2), trackThickness);
+            using var brush = new SolidBrush(fill);
+            FillCapsule(g, brush, capsuleLeft, trackY, thumbX - capsuleLeft, trackThickness);
         }
 
         // Thumb (a touch smaller than the full height for a softer look)
         int thumbSize = (int)Math.Round(d * 0.82);
         var thumbRect = new Rectangle(thumbX - thumbSize / 2, (Height - thumbSize) / 2, thumbSize, thumbSize);
-        using (var shadow = new SolidBrush(ThumbBorder))
+        using (var shadow = new SolidBrush(Theme.ThumbShadow))
         {
             g.FillEllipse(shadow, thumbRect.X, thumbRect.Y + 1, thumbRect.Width, thumbRect.Height);
         }
-        using (var thumb = new SolidBrush(ThumbColor))
+        using (var thumb = new SolidBrush(_muted ? Theme.Subtle : Theme.Thumb))
         {
             g.FillEllipse(thumb, thumbRect);
         }

@@ -34,6 +34,18 @@ public static class Strings
 
     public static string NightLight => Pick("Night light", "Ночной свет");
 
+    public static string AllMonitors => Pick("All monitors", "Все мониторы");
+
+    /// <summary>Shown on the master pill when displays disagree about night mode.</summary>
+    public static string Mixed => Pick("Mixed", "Разное");
+
+    /// <summary>Explains why a display has no brightness slider.</summary>
+    public static string NoDdcHint => Pick("no DDC/CI", "нет DDC/CI");
+
+    public static string ToggleNightAll => Pick(
+        "Night mode on all monitors",
+        "Ночной режим на всех мониторах");
+
     public static string On => Pick("On", "Вкл");
 
     public static string Off => Pick("Off", "Выкл");

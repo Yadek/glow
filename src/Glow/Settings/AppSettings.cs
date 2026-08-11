@@ -2,41 +2,90 @@ using Microsoft.Win32;
 
 namespace Glow.Settings;
 
-// Per-user app settings stored under HKCU\Software\Glow.
-// (Removed on uninstall by the installer, so nothing is left behind.)
+// Per-user app settings under HKCU\Software\Glow.
+//
+//   Software\Glow                       global options
+//   Software\Glow\Displays\<key>        per-display night mode
+//
+// The installer removes the whole tree on uninstall, so nothing is left behind.
 public static class AppSettings
 {
     private const string KeyPath = @"Software\Glow";
+    private const string DisplaysPath = KeyPath + @"\Displays";
+
+    public const int DefaultNightIntensity = 50;
 
     public static bool AnimateTrayIcon
     {
-        get => GetBool("AnimateTrayIcon");
-        set => SetInt("AnimateTrayIcon", value ? 1 : 0);
+        get => GetInt(KeyPath, "AnimateTrayIcon") != 0;
+        set => SetInt(KeyPath, "AnimateTrayIcon", value ? 1 : 0);
     }
 
-    public static bool NightEnabled
+    // ----- per-display night mode -----
+
+    public static bool GetNightEnabled(string displayKey)
+        => GetInt(DisplayPath(displayKey), "NightEnabled") != 0;
+
+    public static void SetNightEnabled(string displayKey, bool enabled)
+        => SetInt(DisplayPath(displayKey), "NightEnabled", enabled ? 1 : 0);
+
+    public static int GetNightIntensity(string displayKey)
+        => Math.Clamp(GetInt(DisplayPath(displayKey), "NightIntensity", DefaultNightIntensity), 0, 100);
+
+    public static void SetNightIntensity(string displayKey, int percent)
+        => SetInt(DisplayPath(displayKey), "NightIntensity", Math.Clamp(percent, 0, 100));
+
+    // ----- migration from the single global night setting (<= 1.1.2) -----
+
+    /// <summary>
+    /// Up to 1.1.2 night mode was one global on/off + intensity. Copy it onto every
+    /// display the first time the new build runs, so upgrading users keep their
+    /// setting instead of silently losing it. Runs once.
+    /// </summary>
+    public static void MigrateLegacyNightSettings(IEnumerable<string> displayKeys)
     {
-        get => GetBool("NightEnabled");
-        set => SetInt("NightEnabled", value ? 1 : 0);
+        if (GetInt(KeyPath, "DisplaysMigrated") != 0)
+        {
+            return;
+        }
+
+        bool legacyEnabled = GetInt(KeyPath, "NightEnabled") != 0;
+        int legacyIntensity = Math.Clamp(GetInt(KeyPath, "NightIntensity", DefaultNightIntensity), 0, 100);
+
+        foreach (string key in displayKeys)
+        {
+            SetNightEnabled(key, legacyEnabled);
+            SetNightIntensity(key, legacyIntensity);
+        }
+
+        SetInt(KeyPath, "DisplaysMigrated", 1);
     }
 
-    public static int NightIntensity
+    private static string DisplayPath(string displayKey) => $@"{DisplaysPath}\{displayKey}";
+
+    private static int GetInt(string path, string name, int defaultValue = 0)
     {
-        get => GetInt("NightIntensity", defaultValue: 50); // 50% on a fresh install
-        set => SetInt("NightIntensity", value);
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(path);
+            return key?.GetValue(name) is int v ? v : defaultValue;
+        }
+        catch
+        {
+            return defaultValue;
+        }
     }
 
-    private static bool GetBool(string name) => GetInt(name) != 0;
-
-    private static int GetInt(string name, int defaultValue = 0)
+    private static void SetInt(string path, string name, int value)
     {
-        using var key = Registry.CurrentUser.OpenSubKey(KeyPath);
-        return key?.GetValue(name) is int v ? v : defaultValue;
-    }
-
-    private static void SetInt(string name, int value)
-    {
-        using var key = Registry.CurrentUser.CreateSubKey(KeyPath);
-        key?.SetValue(name, value, RegistryValueKind.DWord);
+        try
+        {
+            using var key = Registry.CurrentUser.CreateSubKey(path);
+            key?.SetValue(name, value, RegistryValueKind.DWord);
+        }
+        catch
+        {
+            // Read-only registry (locked-down machine) — settings just won't persist.
+        }
     }
 }

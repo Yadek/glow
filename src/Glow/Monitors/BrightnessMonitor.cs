@@ -14,24 +14,23 @@ public sealed class BrightnessMonitor : IDisposable
     private int _pending = -1;
     private bool _running;
 
-    public string Name { get; }
     public uint Minimum { get; }
     public uint Maximum { get; }
     public uint Current { get; private set; }
 
     private BrightnessMonitor(
         NativeMethods.PHYSICAL_MONITOR physical,
-        string name, uint min, uint current, uint max)
+        uint min, uint current, uint max)
     {
         _physical = physical;
-        Name = name;
         Minimum = min;
         Current = current;
         Maximum = max;
     }
 
-    // Returns null when the display doesn't expose DDC/CI brightness.
-    internal static BrightnessMonitor? TryCreate(NativeMethods.PHYSICAL_MONITOR physical, string? friendlyName)
+    // Returns null when the display doesn't expose DDC/CI brightness. The display
+    // name comes from EDID via DisplayCatalog, so it isn't needed here.
+    internal static BrightnessMonitor? TryCreate(NativeMethods.PHYSICAL_MONITOR physical)
     {
         if (!NativeMethods.GetMonitorBrightness(
                 physical.hPhysicalMonitor, out uint min, out uint cur, out uint max)
@@ -42,12 +41,7 @@ public sealed class BrightnessMonitor : IDisposable
             return null;
         }
 
-        string name =
-            !string.IsNullOrWhiteSpace(friendlyName) ? friendlyName!.Trim() :
-            !string.IsNullOrWhiteSpace(physical.szPhysicalMonitorDescription) ? physical.szPhysicalMonitorDescription.Trim() :
-            "Display";
-
-        return new BrightnessMonitor(physical, name, min, cur, max);
+        return new BrightnessMonitor(physical, min, cur, max);
     }
 
     // Brightness as 0–100% of the monitor's supported range.
