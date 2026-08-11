@@ -29,6 +29,7 @@
 - **Auto localization** — UI follows the Windows display language (English / Русский), English fallback.
 - **Matches your theme** — follows the Windows light/dark app theme and accent colour, with Windows 11 rounded corners.
 - **Silent autostart** — optional launch with Windows via `HKCU\…\Run`.
+- **Auto-update** — checks GitHub Releases and updates once you say yes. Betas are skipped.
 - **Clean uninstall** — removes the app, the autostart key and all config; leaves no trace.
 
 ## How it works
