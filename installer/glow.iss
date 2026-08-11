@@ -6,6 +6,13 @@
   #define AppVersion "1.0.0"
 #endif
 
+; AppVersion may carry a pre-release suffix (1.2.0-beta.1), which is fine for
+; display but not for the Windows VERSIONINFO resource. CI passes the plain
+; numeric part separately so the resource always gets something valid.
+#ifndef AppVersionNumeric
+  #define AppVersionNumeric "1.0.0"
+#endif
+
 ; Path to the published single-file exe. Override with /DSourceExe in CI.
 #ifndef SourceExe
   #define SourceExe "..\src\Glow\bin\Release\net8.0-windows\win-x64\publish\Glow.exe"
@@ -20,6 +27,7 @@
 AppId={#AppId}
 AppName={#AppName}
 AppVersion={#AppVersion}
+VersionInfoVersion={#AppVersionNumeric}
 AppPublisher={#AppPublisher}
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}

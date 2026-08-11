@@ -4,7 +4,7 @@
 
 # Glow
 
-**Lightweight tray utility to control your monitors' hardware brightness via DDC/CI.**
+**Lightweight tray utility for monitor brightness over DDC/CI — with night mode on each monitor separately, or all of them at once.**
 
 [![Build & Release](https://github.com/Yadek/glow/actions/workflows/build.yml/badge.svg)](https://github.com/Yadek/glow/actions/workflows/build.yml)
 [![Release](https://img.shields.io/github/v/release/Yadek/glow?display_name=tag)](https://github.com/Yadek/glow/releases/latest)
@@ -22,20 +22,24 @@
 
 - **True hardware brightness** — drives external monitors over **DDC/CI** (`Dxva2.dll`), not a software overlay.
 - **Multi-monitor** — auto-detects every connected display and shows a separate slider for each, labelled with the real model name (read from EDID).
-- **Night light** — warm the screen with an on/off toggle and intensity slider; applied to every monitor and restored on exit.
+- **Per-monitor night mode** — each screen gets its own warmth, **or** warm them all at once from the *All monitors* card. Works even on displays with no DDC/CI, because it goes through gamma ramps rather than the monitor's own colour controls.
+- **Settings that stick** — night mode is saved against each display's EDID identity, so it survives a reboot and follows the monitor to another port. Re-applied automatically after sleep, a resolution change or unlocking, where Windows would otherwise reset it silently.
 - **Near-zero footprint** — no background timers or polling; the app sleeps in the message loop and only wakes on a click. Idle CPU ≈ 0%.
 - **Single self-contained `.exe`** — no .NET runtime to install.
 - **Auto localization** — UI follows the Windows display language (English / Русский), English fallback.
-- **Matches your theme** — the slider uses the current Windows accent color.
+- **Matches your theme** — follows the Windows light/dark app theme and accent colour, with Windows 11 rounded corners.
 - **Silent autostart** — optional launch with Windows via `HKCU\…\Run`.
-- **Auto-update** — checks GitHub Releases and updates itself on your confirmation.
 - **Clean uninstall** — removes the app, the autostart key and all config; leaves no trace.
 
 ## How it works
 
-Click the **Glow** icon in the system tray (next to the volume icon) → a small popup appears with one brightness slider per monitor. Drag, and the change is written straight to the display hardware. Right-click the icon for **Run at startup** and **Exit**.
+Click the **Glow** icon in the system tray (next to the volume icon) → a popup appears with one card per monitor. Each card has a **sun row** (hardware brightness over DDC/CI) and a **moon row** (night mode). With more than one display, an **All monitors** card on top drives every screen at once; its night pill reads *Mixed* when your screens disagree.
 
-> DDC/CI must be supported and enabled by the monitor. Most external desktop monitors support it; many laptop internal panels do not (and are simply skipped).
+Right-click the icon for **Night mode on all monitors**, **Run at startup** and **Exit**. Middle-click toggles night mode everywhere without opening the popup.
+
+> **Brightness** needs DDC/CI to be supported and enabled by the monitor. Most external desktop monitors support it; many laptop internal panels do not — those displays still get a card, with night mode only.
+>
+> **Night mode** drives display gamma, so it competes with the Windows *Night light* feature: whichever wrote last wins. Turn the Windows one off if you use Glow's. It also has no effect on a display running in HDR mode, which ignores gamma ramps entirely.
 
 ## Installation
 
@@ -45,6 +49,12 @@ Click the **Glow** icon in the system tray (next to the volume icon) → a small
 
 Prefer no installer? Grab `Glow-x.y.z-portable.exe` from the same release and run it directly — it's fully self-contained.
 
+### Beta builds
+
+Versions tagged `-beta` are published as GitHub **prereleases** and have to be downloaded from the [releases page](https://github.com/Yadek/glow/releases) directly — the *latest release* link above always points at the newest stable build.
+
+Beta builds **never check for updates on their own**, so they won't nag you mid-test; **Check for updates** in the tray menu still works when you ask for it. Stable installs are never offered a beta either, because the update check only looks at the latest *stable* release.
+
 ## Tech stack
 
 | Area           | Choice                                              |
@@ -52,6 +62,7 @@ Prefer no installer? Grab `Glow-x.y.z-portable.exe` from the same release and ru
 | Language       | C# / .NET 8                                          |
 | UI             | WinForms — frameless, hand-drawn dark popup          |
 | Brightness API | Win32 DDC/CI P/Invoke (`Dxva2.dll`)                 |
+| Night mode     | Per-display gamma ramps (`gdi32.dll`)               |
 | Monitor names  | EDID parsed from the registry (no WMI)              |
 | Packaging      | Self-contained single-file exe                      |
 | Installer      | Inno Setup 6                                         |
@@ -88,11 +99,14 @@ git push origin v1.0.0
 ```
 glow/
 ├─ src/Glow/            # application source
-│  ├─ Native/           # Win32 / DDC-CI P/Invoke
-│  ├─ Monitors/         # monitor discovery, names, brightness
+│  ├─ Native/           # Win32 / DDC-CI / gamma / DPI P/Invoke
+│  ├─ Monitors/         # display discovery, EDID names, DDC brightness
+│  ├─ NightShift/       # per-display night mode (gamma ramps)
+│  ├─ Settings/         # HKCU settings, incl. per-display state
 │  ├─ Localization/     # EN/RU strings
 │  ├─ Startup/          # HKCU autostart toggle
-│  ├─ UI/               # tray icon, popup, slider, theme
+│  ├─ Update/           # GitHub release check (manual in beta builds)
+│  ├─ UI/               # tray icon, popup, slider, glyphs, theme
 │  └─ glow.ico
 ├─ installer/glow.iss   # Inno Setup script
 ├─ tools/Make-Icon.ps1  # icon generator

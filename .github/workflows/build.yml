@@ -1,13 +1,19 @@
 name: Build & Release
 
+# Every push builds the full pipeline (app + installer) so breakage shows up
+# straight away instead of at release time. Only tags publish a Release.
 on:
   push:
-    tags:
-      - "v*"            # e.g. v1.0.0
-  workflow_dispatch:    # allow manual runs for testing
+    branches: ["**"]
+    tags: ["v*"]            # e.g. v1.2.0 or v1.2.0-beta.1
+  workflow_dispatch:
 
 permissions:
-  contents: write       # required to create a GitHub Release
+  contents: write           # required to create a GitHub Release
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -22,14 +28,27 @@ jobs:
         with:
           dotnet-version: "8.0.x"
 
+      # Tag builds take their version from the tag. Branch builds get a throwaway
+      # version — they are only here to prove the pipeline still works.
+      # A version with a pre-release suffix (v1.2.0-beta.1) is published as a
+      # GitHub prerelease, which the /releases/latest endpoint never returns, so
+      # installed stable builds are never offered a beta.
       - name: Derive version from tag
         id: ver
         shell: pwsh
         run: |
-          $tag = "${{ github.ref_name }}"
-          if ($tag -match '^v(.+)$') { $v = $Matches[1] } else { $v = "1.0.0" }
-          "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          Write-Host "Building version $v"
+          $ref = "${{ github.ref }}"
+          if ($ref -like 'refs/tags/v*') {
+            $v = $ref -replace '^refs/tags/v', ''
+          } else {
+            $v = "0.0.0-dev"
+          }
+          $prerelease = if ($v -match '-') { 'true' } else { 'false' }
+          $numeric = ($v -split '-')[0]      # VERSIONINFO can't take a suffix
+          "version=$v"             | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "numeric=$numeric"       | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "prerelease=$prerelease" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Building version $v (numeric: $numeric, prerelease: $prerelease)"
 
       - name: Restore
         run: dotnet restore src/Glow/Glow.csproj
@@ -53,6 +72,7 @@ jobs:
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
           & "$iscc" "installer\glow.iss" `
             "/DAppVersion=${{ steps.ver.outputs.version }}" `
+            "/DAppVersionNumeric=${{ steps.ver.outputs.numeric }}" `
             "/DSourceExe=$PWD\publish\Glow.exe"
 
       - name: Stage portable exe
@@ -62,7 +82,7 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Glow
+          name: Glow-${{ steps.ver.outputs.version }}
           path: installer/Output/*.exe
 
       - name: Create GitHub Release
@@ -70,5 +90,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           name: Glow ${{ steps.ver.outputs.version }}
+          prerelease: ${{ steps.ver.outputs.prerelease }}
           generate_release_notes: true
           files: installer/Output/*.exe
