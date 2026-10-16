@@ -14,6 +14,7 @@ public sealed class RoundedPanel : Panel
     public RoundedPanel()
     {
         DoubleBuffered = true;
+        SetStyle(ControlStyles.Selectable, true);
         ResizeRedraw = true;
     }
 
@@ -25,9 +26,12 @@ public sealed class RoundedPanel : Panel
 
         var rect = new Rectangle(0, 0, Width - 1, Height - 1);
         using (var path = Build(rect, CornerRadius))
-        using (var brush = new SolidBrush(FillColor))
+        using (var brush = new LinearGradientBrush(rect,
+            Theme.HighContrast ? FillColor : ControlPaint.Light(FillColor, Theme.IsDark ? 0.06f : 0.015f), FillColor, 90f))
         {
             g.FillPath(brush, path);
+            using var edge = new Pen(Theme.Edge);
+            g.DrawPath(edge, path);
         }
 
         if (!string.IsNullOrEmpty(Text))
@@ -35,9 +39,18 @@ public sealed class RoundedPanel : Panel
             TextRenderer.DrawText(g, Text, Font, new Rectangle(0, 0, Width, Height), ForeColor,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
         }
+        if (Focused && ShowFocusCues) ControlPaint.DrawFocusRectangle(g, Rectangle.Inflate(rect, -3, -3), ForeColor, FillColor);
     }
 
-    private static GraphicsPath Build(Rectangle r, int radius)
+    protected override bool IsInputKey(Keys keyData) => keyData is Keys.Space or Keys.Enter || base.IsInputKey(keyData);
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        base.OnKeyDown(e);
+        if (e.KeyCode is Keys.Space or Keys.Enter) { OnClick(EventArgs.Empty); e.Handled = true; }
+    }
+
+    internal static GraphicsPath Build(Rectangle r, int radius)
     {
         int d = Math.Max(1, Math.Min(radius * 2, Math.Min(r.Width, r.Height)));
         var p = new GraphicsPath();

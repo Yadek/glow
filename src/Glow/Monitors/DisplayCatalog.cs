@@ -14,7 +14,9 @@ public sealed record DisplayInfo(
     string Key,          // stable across replug/reboot — used as the settings key
     string Name,         // friendly model name, e.g. "DELL U2419H"
     string DeviceName,   // \\.\DISPLAY1 — the handle gamma ramps are applied to
-    IntPtr HMonitor);
+    IntPtr HMonitor,
+    string? InterfacePath = null,
+    Rectangle Bounds = default);
 
 // Enumerates displays. Deliberately cheap: no DDC/CI traffic, so night mode can
 // run at startup and after every resume without waiting on monitor I2C.
@@ -53,7 +55,9 @@ public static class DisplayCatalog
                 Key: key ?? Sanitize(device),
                 Name: name ?? Localization.Strings.Display(fallbackIndex),
                 DeviceName: device,
-                HMonitor: hMonitor));
+                HMonitor: hMonitor,
+                InterfacePath: InterfacePath(device),
+                Bounds: Rectangle.FromLTRB(info.rcMonitor.Left, info.rcMonitor.Top, info.rcMonitor.Right, info.rcMonitor.Bottom)));
         }
 
         return found;
@@ -64,6 +68,13 @@ public static class DisplayCatalog
     //                     ^vendor+product ^instance
     // Both parts survive reboots and replugs into the same port, so together they
     // make a good settings key. The model name comes from the EDID blob.
+    private static string? InterfacePath(string deviceName)
+    {
+        var device = new NativeMethods.DISPLAY_DEVICE { cb = Marshal.SizeOf<NativeMethods.DISPLAY_DEVICE>() };
+        return NativeMethods.EnumDisplayDevices(deviceName, 0, ref device, NativeMethods.EDD_GET_DEVICE_INTERFACE_NAME)
+            ? device.DeviceID : null;
+    }
+
     private static (string? Key, string? Name) Identify(string deviceName)
     {
         var dd = new NativeMethods.DISPLAY_DEVICE { cb = Marshal.SizeOf<NativeMethods.DISPLAY_DEVICE>() };

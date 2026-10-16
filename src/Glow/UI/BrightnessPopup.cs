@@ -5,6 +5,7 @@ using Glow.Monitors;
 using Glow.Native;
 using Glow.NightShift;
 using Glow.Settings;
+using Glow.Wallpapers;
 
 namespace Glow.UI;
 
@@ -22,13 +23,21 @@ namespace Glow.UI;
 public sealed class BrightnessPopup : Form
 {
     private readonly DisplayManager _displays;
+    private readonly WallpaperPreviewService _wallpapers = new();
+    private readonly List<(MonitorPreview Control, WallpaperDisplay Display)> _previews = new();
+    private readonly HashSet<MonitorPreview> _previewStarted = new();
+    private CancellationTokenSource? _previewCancellation;
+    private int _previewGeneration;
+    private bool _glass;
+    private bool _animate;
+    internal ContextMenuStrip? SettingsMenu { get; set; }
 
     // Logical sizes (@96 DPI); multiplied by the target screen's scale at build time.
     private const int LWidth = 320;
     private const int LPadX = 14;
     private const int LPadTop = 12;
     private const int LPadBottom = 14;
-    private const int LTitleH = 22;
+    private const int LTitleH = 32;
     private const int LCardGap = 8;
     private const int LCardRadius = 12;
     private const int LCardInsetX = 14;
@@ -160,6 +169,8 @@ public sealed class BrightnessPopup : Form
 
         BackColor = Theme.FormBg;
         ApplyWindowAttributes();
+        _glass = WindowBackdrop.Apply(this, AppSettings.GlassEnabled);
+        _animate = SystemInformation.IsMenuAnimationEnabled && !Theme.HighContrast;
 
         _screen = screen;
         _displays.Refresh();
@@ -169,14 +180,18 @@ public sealed class BrightnessPopup : Form
         ResizeToContent(screen, BuildContent());
 
         // Start transparent and slightly lower, then fade + slide up.
-        Opacity = 0;
+        // A layered window (Opacity < 1) disables the DWM backdrop. Glass uses
+        // slide-only animation; opaque fallback retains the existing fade.
+        Opacity = _glass || !_animate ? 1 : 0;
         Top = _finalTop + S(SlideOffset);
         _animProgress = 0;
         _animDir = 1;
 
         Show();
         Activate();
-        _anim.Start();
+        LoadVisiblePreviews();
+        if (_animate) _anim.Start();
+        else { _animProgress = 1; Top = _finalTop; }
     }
 
     // Sizes the window to the freshly built content and re-anchors it. Called both
@@ -186,7 +201,7 @@ public sealed class BrightnessPopup : Form
         int margin = S(LMargin);
         int maxHeight = screen.WorkingArea.Height - margin * 2;
 
-        Width = S(LWidth);
+        Width = Math.Min(S(LWidth), Math.Max(1, screen.WorkingArea.Width - margin * 2));
         if (height > maxHeight)
         {
             // More displays than fit on screen — scroll rather than run off the edge.
@@ -294,6 +309,15 @@ public sealed class BrightnessPopup : Form
     public void HideAnimated()
     {
         if (!Visible) return;
+        CancelPreviews();
+        if (!_animate)
+        {
+            _anim.Stop();
+            _lastHide = DateTime.UtcNow;
+            PersistMasterValues();
+            base.Hide();
+            return;
+        }
         if (_animDir < 0 && _anim.Enabled) return; // already fading out
         if (_animProgress <= 0) _animProgress = 1;  // shown instantly -> start from full
         _animDir = -1;
@@ -308,7 +332,7 @@ public sealed class BrightnessPopup : Form
         {
             _animProgress = 0;
             _anim.Stop();
-            Opacity = 0;
+            if (!_glass) Opacity = 0;
             _lastHide = DateTime.UtcNow;
             PersistMasterValues();
             base.Hide();
@@ -321,7 +345,7 @@ public sealed class BrightnessPopup : Form
         }
 
         double eased = EaseOutCubic(Math.Clamp(_animProgress, 0, 1));
-        Opacity = eased;
+        if (!_glass) Opacity = eased;
         Top = _finalTop + (int)Math.Round((1 - eased) * S(SlideOffset));
     }
 
@@ -332,6 +356,10 @@ public sealed class BrightnessPopup : Form
     // Builds the controls and returns the total form height in device px.
     private int BuildContent()
     {
+        CancelPreviews();
+        _previewCancellation = new CancellationTokenSource();
+        _previews.Clear();
+        _previewStarted.Clear();
         SuspendLayout();
         DisposeChildren();
         Controls.Clear();
@@ -341,19 +369,31 @@ public sealed class BrightnessPopup : Form
         _masterNight = null;
         _masterPill = null;
 
-        int contentWidth = S(LWidth) - S(LPadX) * 2;
+        int availableWidth = Math.Min(S(LWidth), (_screen?.WorkingArea.Width ?? S(LWidth)) - S(LMargin) * 2);
+        // Reserve scroll space on every layout so adding a scrollbar cannot clip controls.
+        int contentWidth = Math.Max(S(120), availableWidth - S(LPadX) * 2 - SystemInformation.VerticalScrollBarWidth);
         int y = S(LPadTop);
 
         Controls.Add(new Label
         {
-            Text = Strings.Title,
+            Text = "Glow",
             ForeColor = Theme.Text,
             BackColor = Theme.FormBg,
             Font = MakeFont(14f, FontStyle.Bold),
             AutoSize = false,
             TextAlign = ContentAlignment.MiddleLeft,
-            Bounds = new Rectangle(S(LPadX) + S(4), y, contentWidth, S(LTitleH)),
+            Bounds = new Rectangle(S(LPadX) + S(4), y, contentWidth - S(38), S(LTitleH)),
         });
+        var settings = new Button
+        {
+            Text = "⚙", AccessibleName = Strings.Settings, FlatStyle = FlatStyle.Flat,
+            ForeColor = Theme.Text, BackColor = Theme.CardBg, TabStop = true,
+            Font = MakeFont(17f), Cursor = Cursors.Hand,
+            Bounds = new Rectangle(S(LPadX) + contentWidth - S(32), y, S(32), S(LTitleH)),
+        };
+        settings.FlatAppearance.BorderSize = 0;
+        settings.Click += (_, _) => SettingsMenu?.Show(settings, new Point(0, settings.Height));
+        Controls.Add(settings);
         y += S(LTitleH) + S(6);
 
         var displays = _displays.Displays;
@@ -392,7 +432,7 @@ public sealed class BrightnessPopup : Form
         {
             foreach (var display in displays)
             {
-                int h = CardHeight(display.SupportsBrightness);
+                int h = CardHeight(display.SupportsBrightness) + (AppSettings.WallpaperPreviewsEnabled ? S(80) : 0);
                 Controls.Add(BuildDisplayCard(display, new Rectangle(S(LPadX), y, contentWidth, h)));
                 y += h + S(LCardGap);
             }
@@ -458,6 +498,9 @@ public sealed class BrightnessPopup : Form
         CornerRadius = S(LPillH) / 2,
         Font = MakeFont(10.5f, FontStyle.Bold),
         Cursor = Cursors.Hand,
+        TabStop = true,
+        AccessibleRole = AccessibleRole.CheckButton,
+        AccessibleName = Strings.NightLight,
         Bounds = new Rectangle(x, y + (S(LRowH) - S(LPillH)) / 2, S(LPillW), S(LPillH)),
     };
 
@@ -467,6 +510,9 @@ public sealed class BrightnessPopup : Form
     {
         var strip = NewCard(bounds);
         strip.Cursor = Cursors.Hand;
+        strip.TabStop = true;
+        strip.AccessibleRole = AccessibleRole.PushButton;
+        strip.AccessibleName = _expanded ? Strings.Collapse : Strings.EachMonitor;
 
         int innerX = S(LCardInsetX);
         int glyphSize = S(LGlyphW);
@@ -521,6 +567,7 @@ public sealed class BrightnessPopup : Form
         // Already on screen, so land on the final position instead of re-running
         // the entrance slide from below.
         Top = _finalTop;
+        LoadVisiblePreviews();
     }
 
     private RoundedPanel BuildMasterCard(Rectangle bounds, bool withBrightnessRow)
@@ -573,6 +620,7 @@ public sealed class BrightnessPopup : Form
         _masterNight = new BrightnessSlider
         {
             FillColor = NightFill,
+            AccessibleName = Strings.NightLight,
             BackColor = Theme.CardBg,
             Bounds = new Rectangle(sliderX, y + (S(LRowH) - S(20)) / 2, nightWidth, S(20)),
         };
@@ -591,7 +639,20 @@ public sealed class BrightnessPopup : Form
         int sliderX = innerX + S(LGlyphW) + S(LGlyphGap);
 
         int y = S(LCardPadTop);
-        card.Controls.Add(NewHeaderLabel(display.Name, innerX, y, innerW - S(LPercentW)));
+        if (AppSettings.WallpaperPreviewsEnabled)
+        {
+            var preview = new MonitorPreview
+            {
+                BackColor = Theme.CardBg, Font = MakeFont(10f),
+                Bounds = new Rectangle(innerX, y, innerW, S(72)),
+            };
+            card.Controls.Add(preview);
+            _previews.Add((preview, new WallpaperDisplay(display.Key, display.Info.InterfacePath,
+                display.Info.Bounds, _displays.Displays.Count == 1)));
+            y += S(80);
+        }
+        card.Controls.Add(NewHeaderLabel(display.Name, innerX, y,
+            Math.Max(S(24), innerW - S(display.SupportsBrightness ? LPercentW : 124))));
 
         var row = new DisplayRow
         {
@@ -661,6 +722,7 @@ public sealed class BrightnessPopup : Form
         var night = new BrightnessSlider
         {
             FillColor = NightFill,
+            AccessibleName = Strings.NightLight + " · " + display.Name,
             BackColor = Theme.CardBg,
             Bounds = new Rectangle(sliderX, y + (S(LRowH) - S(20)) / 2, nightWidth, S(20)),
         };
@@ -725,7 +787,7 @@ public sealed class BrightnessPopup : Form
     }
 
     // Repaints every night pill and slider from the current NightMode state.
-    private void RefreshNightVisuals()
+    internal void RefreshNightVisuals()
     {
         foreach (var row in _rows)
         {
@@ -754,7 +816,7 @@ public sealed class BrightnessPopup : Form
     {
         pill.Text = text;
         pill.FillColor = active ? Theme.Accent : Theme.PillOff;
-        pill.ForeColor = active ? Color.White : Theme.Subtle;
+        pill.ForeColor = Theme.PillForeground(active, Theme.HighContrast, SystemColors.HighlightText, SystemColors.ControlText);
         pill.Invalidate();
     }
 
@@ -771,6 +833,7 @@ public sealed class BrightnessPopup : Form
     protected override void OnDeactivate(EventArgs e)
     {
         base.OnDeactivate(e);
+        if (SettingsMenu?.Visible == true) return;
         _lastHide = DateTime.UtcNow; // mark now so a tray click doesn't reopen
         HideAnimated();              // fade out when the user clicks elsewhere
     }
@@ -800,6 +863,67 @@ public sealed class BrightnessPopup : Form
     {
         base.OnHandleCreated(e);
         ApplyWindowAttributes();
+    }
+
+    protected override void OnPaintBackground(PaintEventArgs e)
+    {
+        if (_glass) e.Graphics.Clear(Color.Black); // extended DWM frame; keep text and cards opaque
+        else base.OnPaintBackground(e);
+    }
+
+    protected override void OnScroll(ScrollEventArgs se)
+    {
+        base.OnScroll(se);
+        LoadVisiblePreviews();
+    }
+
+    internal void RefreshAppearance()
+    {
+        CancelPreviews();
+        if (!Visible) return;
+        Theme.Refresh();
+        _glass = WindowBackdrop.Apply(this, AppSettings.GlassEnabled);
+        BackColor = Theme.FormBg;
+        Relayout();
+        Invalidate(true);
+    }
+
+    private void CancelPreviews()
+    {
+        _previewGeneration++;
+        _previewCancellation?.Cancel();
+        _previewCancellation?.Dispose();
+        _previewCancellation = null;
+    }
+
+    private void LoadVisiblePreviews()
+    {
+        if (!Visible || _previewCancellation is null || !AppSettings.WallpaperPreviewsEnabled) return;
+        Rectangle viewport = RectangleToScreen(ClientRectangle);
+        foreach (var (control, display) in _previews)
+        {
+            if (control.IsDisposed || _previewStarted.Contains(control)
+                || !viewport.IntersectsWith(control.RectangleToScreen(control.ClientRectangle))) continue;
+            _previewStarted.Add(control);
+            _ = LoadPreviewAsync(control, display, _previewGeneration, _previewCancellation.Token);
+        }
+    }
+
+    private async Task LoadPreviewAsync(MonitorPreview control, WallpaperDisplay display, int generation, CancellationToken token)
+    {
+        WallpaperPreview? preview = null;
+        try
+        {
+            preview = await _wallpapers.LoadAsync(display, token);
+            if (token.IsCancellationRequested || generation != _previewGeneration || IsDisposed || control.IsDisposed || !Visible) return;
+            control.SetPreview(preview);
+            preview = null; // the control now owns it
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidOperationException
+            or System.Runtime.InteropServices.ExternalException)
+        { /* A preview failure must never disable brightness controls. */ }
+        finally { preview?.Dispose(); }
     }
 
     // Windows 11 chrome: rounded corners, a dark title/border when the app theme
@@ -838,6 +962,8 @@ public sealed class BrightnessPopup : Form
         if (disposing)
         {
             PersistMasterValues(); // exiting with the popup still open
+            CancelPreviews();
+            _wallpapers.Dispose();
             _anim.Dispose();
             ResetFonts();
         }

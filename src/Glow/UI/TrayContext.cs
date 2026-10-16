@@ -52,11 +52,18 @@ public sealed class TrayContext : ApplicationContext
 
         menu.Items.Add(_nightItem);
         menu.Items.Add(new ToolStripSeparator());
+        PopupSettingsMenu.AddTo(menu, _popup.RefreshAppearance);
         menu.Items.Add(_startupItem);
         menu.Items.Add(_animateItem);
         menu.Items.Add(new ToolStripMenuItem(Strings.CheckUpdates, null, async (_, _) => await CheckForUpdatesAsync(manual: true)));
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(new ToolStripMenuItem(Strings.Exit, null, OnExit));
+        _popup.SettingsMenu = menu;
+        menu.Closed += (_, _) =>
+        {
+            if (!_popup.IsHandleCreated || _popup.IsDisposed) return;
+            _popup.BeginInvoke(() => { if (Form.ActiveForm != _popup) _popup.HideAnimated(); });
+        };
 
         _tray = new NotifyIcon
         {
@@ -95,7 +102,11 @@ public sealed class TrayContext : ApplicationContext
         }
     }
 
-    private void OnToggleNightAll(object? sender, EventArgs e) => NightMode.ToggleAll();
+    private void OnToggleNightAll(object? sender, EventArgs e)
+    {
+        NightMode.ToggleAll();
+        _popup.RefreshNightVisuals();
+    }
 
     private void OnToggleStartup(object? sender, EventArgs e)
     {
@@ -131,6 +142,11 @@ public sealed class TrayContext : ApplicationContext
     {
         _displays.Invalidate();
         NightMode.Reapply();
+        if (_popup.IsHandleCreated && !_popup.IsDisposed)
+        {
+            try { _popup.BeginInvoke(_popup.HideAnimated); }
+            catch (InvalidOperationException) { }
+        }
     }
 
     private void OnPowerModeChanged(object? sender, PowerModeChangedEventArgs e)

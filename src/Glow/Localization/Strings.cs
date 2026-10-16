@@ -19,10 +19,16 @@ public static class Strings
     public static string TrayTooltip => Pick("Glow — monitor brightness", "Glow — яркость мониторов");
 
     public static string Title => Pick("Brightness", "Яркость");
+    public static string Settings => Pick("Settings", "Настройки");
+    public static string Glass => Pick("Glass effect", "Эффект стекла");
+    public static string WallpaperPreviews => Pick("Wallpaper previews", "Превью обоев");
+    public static string DesktopWallpaper => Pick("Desktop wallpaper", "Обои рабочего стола");
+    public static string EnginePreview => Pick("Wallpaper Engine · still preview", "Wallpaper Engine · статичное превью");
+    public static string WallpaperUnavailable => Pick("Wallpaper unavailable", "Обои недоступны");
 
     public static string NoMonitors => Pick(
-        "No DDC/CI-capable monitors found",
-        "Мониторы с поддержкой DDC/CI не найдены");
+        "No monitors found",
+        "Мониторы не найдены");
 
     public static string RunAtStartup => Pick("Run at startup", "Запускать при старте Windows");
 

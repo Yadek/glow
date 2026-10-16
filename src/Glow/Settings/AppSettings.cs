@@ -18,6 +18,18 @@ public static class AppSettings
     /// <summary>Sentinel for a master slider the user has never touched.</summary>
     public const int UnsetMaster = -1;
 
+    public static bool GlassEnabled
+    {
+        get => GetInt(KeyPath, "GlassEnabled", 1) != 0;
+        set => SetInt(KeyPath, "GlassEnabled", value ? 1 : 0);
+    }
+
+    public static bool WallpaperPreviewsEnabled
+    {
+        get => GetInt(KeyPath, "WallpaperPreviewsEnabled", 1) != 0;
+        set => SetInt(KeyPath, "WallpaperPreviewsEnabled", value ? 1 : 0);
+    }
+
     public static bool AnimateTrayIcon
     {
         get => GetInt(KeyPath, "AnimateTrayIcon") != 0;

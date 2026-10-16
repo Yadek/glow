@@ -1,5 +1,6 @@
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using Glow.Localization;
 
 namespace Glow.UI;
 
@@ -35,7 +36,9 @@ public sealed class BrightnessSlider : Control
                | ControlStyles.OptimizedDoubleBuffer
                | ControlStyles.ResizeRedraw
                | ControlStyles.UserPaint, true);
-        TabStop = false;
+        TabStop = true;
+        AccessibleRole = AccessibleRole.Slider;
+        AccessibleName = Strings.Title;
     }
 
     public int Value
@@ -78,7 +81,7 @@ public sealed class BrightnessSlider : Control
         g.PixelOffsetMode = PixelOffsetMode.Half;
 
         int d = ThumbDiameter;
-        int trackThickness = Math.Max(4, Height / 5);
+        int trackThickness = Math.Max(6, Height / 3);
         int trackY = (Height - trackThickness) / 2;
         int trackLeft = d / 2;
         int trackRight = Width - d / 2;
@@ -113,6 +116,7 @@ public sealed class BrightnessSlider : Control
         {
             g.FillEllipse(thumb, thumbRect);
         }
+        if (Focused && ShowFocusCues) ControlPaint.DrawFocusRectangle(g, ClientRectangle, Theme.Text, BackColor);
     }
 
     private static void FillCapsule(Graphics g, Brush brush, int x, int y, int width, int height)
@@ -136,6 +140,7 @@ public sealed class BrightnessSlider : Control
         if (e.Button == MouseButtons.Left)
         {
             _dragging = true;
+            Focus();
             Capture = true;
             Value = XToValue(e.X);
         }
@@ -161,5 +166,22 @@ public sealed class BrightnessSlider : Control
     {
         base.OnMouseWheel(e);
         Value += Math.Sign(e.Delta) * 5;
+    }
+
+    internal static int ValueAfterKey(int value, Keys key) => Math.Clamp(key switch
+    {
+        Keys.Home => 0, Keys.End => 100,
+        Keys.Left or Keys.Down => value - 1, Keys.Right or Keys.Up => value + 1,
+        Keys.PageDown => value - 10, Keys.PageUp => value + 10, _ => value,
+    }, 0, 100);
+
+    protected override bool IsInputKey(Keys keyData) => (keyData & Keys.KeyCode) is Keys.Left or Keys.Right or Keys.Up
+        or Keys.Down or Keys.Home or Keys.End or Keys.PageUp or Keys.PageDown || base.IsInputKey(keyData);
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        base.OnKeyDown(e);
+        int value = ValueAfterKey(Value, e.KeyCode);
+        if (value != Value) { Value = value; e.Handled = true; }
     }
 }
