@@ -13,6 +13,7 @@ artifacts/
 
 # Logs
 *.log
+__pycache__/
 
 # OS
 Thumbs.db

@@ -30,6 +30,22 @@ Glow puts a slider in your system tray that changes the brightness **in the moni
 
 It is a single self-contained `.exe`, uses essentially no CPU while idle, and is free and open source. If you came here looking for a replacement for **ClickMonitorDDC**, which has not been updated in years, or for an alternative to **Twinkle Tray** or **Monitorian**, that is exactly the job Glow does.
 
+## Glow 1.3
+
+Monitor cards show a small preview of each display's desktop wallpaper. The compact popup keeps hardware brightness and per-monitor night mode, with keyboard-accessible sliders and settings available from the header or tray menu. The glass option requests Windows 11's system Acrylic; older Windows versions, high contrast, disabled transparency or an unavailable effect use an opaque surface.
+
+Windows wallpapers are matched by display identity, with an unambiguous geometry fallback. Previews load only while their cards are visible and stay in a bounded memory cache. Solid colours, missing files and unavailable wallpapers show a neutral placeholder. No desktop screenshots are taken.
+
+Wallpaper Engine support is a **static preview**, not live capture. Glow queries a running instance only when there is a single display; multi-display Wallpaper Engine location mapping has not been verified, so those setups use the Windows wallpaper fallback. A missing or unreadable project preview also falls back. Actual Wallpaper Engine integration still needs verification with the app running.
+
+## Repository activity
+
+[![Repository activity — waiting for the first successful collection](https://raw.githubusercontent.com/Yadek/glow/stats/overview.svg)](https://github.com/Yadek/glow/tree/stats)
+
+The daily [statistics workflow](https://github.com/Yadek/glow/actions/workflows/stats.yml) saves [JSON history](https://github.com/Yadek/glow/blob/stats/history.json) and this graph in the `stats` branch. The graph becomes available after the first successful run on the default branch. Stars, forks and release downloads are observed daily from that point; no earlier totals are invented.
+
+Downloads count **release asset downloads**, including prereleases, rather than unique people or installations. GitHub's traffic API exposes the last **14 days** of page views and clones and needs additional access. Available daily data is merged by UTC date and preserved; missing access or missed days stay missing. Daily unique visitors are never added into a lifetime unique total. Traffic collection is optional; see [CONTRIBUTING.md](CONTRIBUTING.md#repository-statistics).
+
 ## Install
 
 1. Download **`Glow-Setup-x.y.z.exe`** from the [latest release](https://github.com/Yadek/glow/releases/latest).

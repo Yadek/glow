@@ -36,6 +36,32 @@ dotnet publish src/Glow/Glow.csproj -c Release -r win-x64 `
 
 The tray icon is drawn at runtime; the `.exe` icon (`src/Glow/glow.ico`) is committed and can be regenerated from the logo with `tools/Make-Icon.ps1`.
 
+## Local checks
+
+```powershell
+dotnet run --project tests/Glow.Tests -c Release
+python -m unittest discover -s tools -p test_github_stats.py -v
+dotnet build Glow.sln -c Release
+```
+
+The C# checks use a self-contained Windows runner and no external test framework. They use local fixture images and do not change monitor brightness or gamma. Hardware support, resume/hot-plug and the actual DWM material still require a Windows smoke test. Wallpaper Engine's multi-monitor mapping is deliberately disabled until verified against a running installation; a numeric CLI index is not a Windows display identity.
+
+## Repository statistics
+
+`stats.yml` runs at 03:17 UTC daily and on manual dispatch from the default branch. It saves observations and `overview.svg` in an orphan `stats` branch; that branch is excluded from app builds. GitHub can delay scheduled jobs. History remains in that branch even when an API date leaves the 14-day traffic window; a scheduling gap longer than the window cannot be reconstructed.
+
+The normal Actions token collects public totals and writes the history branch. To collect optional traffic, create a repository secret named **GH_TRAFFIC_TOKEN** through **Settings → Secrets and variables → Actions**. Use a GitHub App installation token or a fine-grained token scoped only to this repository with **Administration: read**. Configure the token's own expiry/rotation as needed. Never paste it into an issue, chat or source file. Connecting GitHub to a coding app does not create this Actions secret.
+
+No traffic secret or a 403/404 leaves traffic unavailable while public metrics continue. Transient traffic errors preserve old samples and mark the source as an error. Public API failures or invalid history abort the run without a commit. Repeated runs replace overlapping UTC days; they never add the same day's traffic twice. Asset downloads are paginated across stable releases and prereleases, excluding drafts; deleted assets can reduce the current observable total.
+
+For local collection, set `GH_TOKEN` and optionally `GH_TRAFFIC_TOKEN` in the process environment using your secure credential tooling, then run:
+
+```powershell
+python tools/github_stats.py --repository Yadek/glow --data-dir artifacts/stats
+```
+
+Do not commit test fixtures as real history. Commits on `stats` use the standard GitHub Actions bot identity; product commits keep the human author's configured identity with no AI trailers.
+
 ## Releasing
 
 Push a version tag and CI builds the exe, packages the installer and attaches both to a new GitHub Release:
